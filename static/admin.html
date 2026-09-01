@@ -433,9 +433,26 @@
                 <label>Готовый план</label>
                 <select id="plan-select" onchange="onPlanSelect()"><option value="">— выберите план —</option></select>
             </div>
+            <button class="primary-btn" id="rollout-btn" onclick="rolloutPlan()" style="display:none;">
+                <i data-lucide="sparkles"></i> Сгенерировать содержание по всем профессиям
+            </button>
+            <button class="ghost-btn" id="cancel-gen-btn" onclick="cancelGeneration()" style="display:none;">
+                <i data-lucide="x-circle"></i> Отменить
+            </button>
             <span id="plan-status" style="color:#475569;font-size:14px;"></span>
         </div>
 
+        <div class="stage-hint">
+            Кнопка назначит этот план всем сотрудникам и сгенерирует содержание под каждую
+            должность из штатного расписания. Запусти после загрузки штатки на вкладке «Штатное расписание».
+        </div>
+
+        <div class="progress-wrap" id="progress-wrap" style="display:none;">
+            <div class="progress-bar"><div id="progress-fill"></div></div>
+            <div class="progress-label" id="progress-label"></div>
+        </div>
+
+        <div id="prof-view" style="margin-top:16px;"></div>
         <div id="schedule-result"></div>
     </div>
 
@@ -1282,9 +1299,85 @@
             const id = document.getElementById('plan-select').value;
             plan.plan_id = id || null;
             const box = document.getElementById('schedule-result');
+            document.getElementById('rollout-btn').style.display = id ? 'inline-flex' : 'none';
+            document.getElementById('prof-view').innerHTML = '';
             if (!id) { box.innerHTML = ''; setStatus(''); return; }
             box.innerHTML = '<div class="stage-hint">Загрузка плана…</div>';
+            loadProfessions();
             loadScheduleIfAny();
+        }
+
+        // Профессии, под которые уже сгенерировано содержание — переключатель просмотра.
+        function loadProfessions() {
+            if (!plan.plan_id) return;
+            api(`/plans/${encodeURIComponent(plan.plan_id)}/professions`).then(r => r.json()).then(d => {
+                const profs = d.professions || [];
+                const box = document.getElementById('prof-view');
+                if (!profs.length) { box.innerHTML = ''; return; }
+                box.innerHTML = `<label>Показать содержание для должности</label>
+                    <select id="prof-select" onchange="loadScheduleFor(this.value)">
+                        <option value="">— общее —</option>
+                        ${profs.map(p => `<option value="${escapeHtml(p.profession)}">${escapeHtml(p.profession)}</option>`).join('')}
+                    </select>`;
+            }).catch(() => {});
+        }
+
+        function loadScheduleFor(profession) {
+            if (!plan.plan_id) return;
+            const q = profession ? `?profession=${encodeURIComponent(profession)}` : '';
+            api(`/plans/${encodeURIComponent(plan.plan_id)}/schedule${q}`)
+                .then(res => res.ok ? res.json() : null)
+                .then(schedule => {
+                    if (schedule) renderSchedule(schedule);
+                    else document.getElementById('schedule-result').innerHTML =
+                        '<div class="stage-hint">Для этой должности расписание ещё не сгенерировано.</div>';
+                }).catch(() => {});
+        }
+
+        // Назначить план всем сотрудникам + сгенерировать содержание по всем профессиям штатки.
+        function rolloutPlan() {
+            if (!plan.plan_id) return;
+            if (!confirm('Назначить этот план всем сотрудникам и сгенерировать содержание по всем должностям из штатки? Генерация идёт в фоне и может занять время.')) return;
+            document.getElementById('rollout-btn').disabled = true;
+            setStatus('Запуск генерации…');
+            apiJson(`/plans/${encodeURIComponent(plan.plan_id)}/rollout`, { method: 'POST' })
+                .then(({ ok, data }) => {
+                    document.getElementById('rollout-btn').disabled = false;
+                    if (!ok) { setStatus(data.detail || 'Не удалось запустить генерацию'); return; }
+                    setStatus('Генерация запущена');
+                    pollJob(data.job_id);
+                }).catch(err => { document.getElementById('rollout-btn').disabled = false; setStatus(err.message); });
+        }
+
+        let genPollTimer = null, currentGenJob = null;
+        function pollJob(jobId) {
+            currentGenJob = jobId;
+            document.getElementById('progress-wrap').style.display = 'block';
+            document.getElementById('cancel-gen-btn').style.display = 'inline-flex';
+            clearInterval(genPollTimer);
+            genPollTimer = setInterval(() => {
+                api(`/jobs/${encodeURIComponent(jobId)}`).then(r => r.json()).then(job => {
+                    const total = job.total || 0, done = job.done || 0;
+                    const pct = total ? Math.round(done / total * 100) : 0;
+                    document.getElementById('progress-fill').style.width = pct + '%';
+                    document.getElementById('progress-label').textContent =
+                        `${done}/${total} · профессий: ${job.professions ?? '—'} · ошибок: ${job.errors ?? 0}`;
+                    if (job.status === 'done' || job.status === 'cancelled' || job.status === 'error') {
+                        clearInterval(genPollTimer);
+                        document.getElementById('cancel-gen-btn').style.display = 'none';
+                        setStatus(job.status === 'done' ? 'Генерация завершена'
+                                 : job.status === 'cancelled' ? 'Генерация отменена' : (job.error || 'Ошибка генерации'));
+                        loadProfessions();
+                        loadScheduleIfAny();
+                    }
+                }).catch(() => {});
+            }, 1500);
+        }
+
+        function cancelGeneration() {
+            if (!currentGenJob) return;
+            api(`/jobs/${encodeURIComponent(currentGenJob)}/cancel`, { method: 'POST' })
+                .then(() => setStatus('Отмена…')).catch(() => {});
         }
 
         function setStatus(text) {

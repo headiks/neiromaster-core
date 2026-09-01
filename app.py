@@ -919,6 +919,22 @@ async def generate_plan(plan_id: str):
     return planner.start_generation(plan, positions=_staffing_positions())
 
 
+@app.post("/plans/{plan_id}/rollout", dependencies=admin_only)
+async def rollout_plan(plan_id: str):
+    """Применить готовый план ко всем сотрудникам: назначить план каждому сотруднику и
+    запустить фоновую генерацию содержания под каждую уникальную должность из штатки.
+    Прогресс — через GET /jobs/{job_id}. Сотрудник дальше видит план своей профессии."""
+    plan = planner.load_plan(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    if not any(s.get("substages") for s in plan.get("stages") or []):
+        raise HTTPException(status_code=400, detail="В плане нет ни одного подэтапа")
+    # Назначаем план всем сотрудникам, чтобы каждый увидел его в кабинете (расписание
+    # подставляется под его должность). Роли админа/владельца не трогаем.
+    db.execute("UPDATE users SET plan_id = %s WHERE role = %s", (plan_id, users.ROLE_EMPLOYEE))
+    return planner.start_generation(plan, positions=_staffing_positions())
+
+
 @app.get("/jobs/{job_id}", dependencies=admin_only)
 async def get_job(job_id: str):
     job = planner.get_job(job_id)
