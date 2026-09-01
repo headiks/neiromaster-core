@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>НейроМастер — админка</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; max-width: 1000px; margin: 24px auto; padding: 16px; background: #f5f7fa; color: #1e293b; }
+        .page-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 10px; }
+        h1 { margin: 0; font-size: 24px; }
+        h2 { font-size: 19px; margin: 0 0 12px; }
+        .head-actions { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+        a.link, button.btn { border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px 13px; background: #fff; cursor: pointer; font-size: 14px; font-family: inherit; text-decoration: none; color: #475569; }
+        button.btn:hover, a.link:hover { background: #f1f5f9; }
+        button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        button.primary:hover { background: #2563eb; }
+        button.danger { color: #b91c1c; border-color: #fecaca; }
+        nav.tabs { display: flex; gap: 6px; margin: 20px 0; flex-wrap: wrap; }
+        nav.tabs button { border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+        nav.tabs button.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        section { display: none; }
+        section.active { display: block; }
+        .card { background: #fff; border-radius: 10px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+        th { background: #f1f5f9; font-size: 13px; }
+        input, textarea, select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; font-size: 14px; margin-bottom: 10px; }
+        label { display: block; font-size: 13px; color: #475569; margin-bottom: 3px; }
+        .row { display: flex; gap: 12px; flex-wrap: wrap; }
+        .row > div { flex: 1; min-width: 180px; }
+        .status { font-size: 12px; padding: 2px 8px; border-radius: 20px; background: #e2e8f0; }
+        .status.indexed { background: #bbf7d0; color: #14532d; }
+        .status.error { background: #fecaca; color: #991b1b; }
+        .status.processing, .status.reanalyzing { background: #fde68a; color: #78350f; }
+        .muted { color: #94a3b8; font-size: 13px; }
+        .msg { padding: 10px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
+        .msg.err { background: #fee2e2; color: #b91c1c; }
+        .msg.ok { background: #dcfce7; color: #166534; }
+    </style>
+</head>
+<body>
+    <div class="page-head">
+        <h1>НейроМастер · админка</h1>
+        <div class="head-actions">
+            <span id="whoami" class="muted"></span>
+            <a class="link" href="/">Кабинет</a>
+            <button class="btn" onclick="logout()">Выйти</button>
+        </div>
+    </div>
+
+    <nav class="tabs">
+        <button data-tab="docs" class="active" onclick="showTab('docs')">Документы</button>
+        <button data-tab="folders" onclick="showTab('folders')">Смысловые папки</button>
+        <button data-tab="users" onclick="showTab('users')">Пользователи</button>
+        <button data-tab="questions" onclick="showTab('questions')">Вопросы <span id="q-count"></span></button>
+    </nav>
+    <div id="msg"></div>
+
+    <!-- ============ Документы ============ -->
+    <section id="docs" class="active">
+        <div class="card">
+            <h2>Загрузить регламент</h2>
+            <input type="file" id="doc-file" accept=".pdf,.docx,.pptx,.html,.htm,.md,.txt">
+            <button class="primary btn" onclick="uploadDoc()">Загрузить и проиндексировать</button>
+            <button class="btn" onclick="reanalyzeAll()">Переанализировать всю базу</button>
+        </div>
+        <div class="card">
+            <h2>Документы базы знаний</h2>
+            <table><thead><tr><th>Файл</th><th>Статус</th><th>Папки</th><th>Чанков</th><th></th></tr></thead>
+                <tbody id="docs-body"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- ============ Папки ============ -->
+    <section id="folders">
+        <div class="card">
+            <h2>Новая смысловая папка</h2>
+            <div class="row">
+                <div><label>Название</label><input id="f-name"></div>
+                <div><label>Критерии отнесения (через запятую)</label><input id="f-criteria" placeholder="охрана труда, спецодежда"></div>
+            </div>
+            <label>Описание</label><textarea id="f-desc" rows="2"></textarea>
+            <button class="primary btn" onclick="createFolder()">Создать папку</button>
+        </div>
+        <div class="card">
+            <h2>Папки</h2>
+            <table><thead><tr><th>Название</th><th>Критерии</th><th>Документов</th><th>Вкл</th><th></th></tr></thead>
+                <tbody id="folders-body"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- ============ Пользователи ============ -->
+    <section id="users">
+        <div class="card">
+            <h2>Новый сотрудник</h2>
+            <div class="row">
+                <div><label>ФИО</label><input id="u-fullname"></div>
+                <div><label>Должность</label><input id="u-position"></div>
+            </div>
+            <div class="row">
+                <div><label>Логин (необязательно)</label><input id="u-username"></div>
+                <div><label>Временный пароль (необязательно)</label><input id="u-password"></div>
+            </div>
+            <button class="primary btn" onclick="createUser()">Создать</button>
+        </div>
+        <div class="card">
+            <h2>Пользователи</h2>
+            <table><thead><tr><th>ФИО</th><th>Логин</th><th>Роль</th><th>Активен</th><th></th></tr></thead>
+                <tbody id="users-body"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- ============ Вопросы (эскалации) ============ -->
+    <section id="questions">
+        <div class="card">
+            <h2>Вопросы без ответа ассистента</h2>
+            <div id="questions-body" class="muted">Загрузка…</div>
+        </div>
+    </section>
+
+    <script>
+        function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+        function api(url, opts) {
+            return fetch(url, opts).then(r => { if (r.status === 401) { location.href = '/login'; throw new Error('401'); } return r; });
+        }
+        function flash(text, ok) {
+            document.getElementById('msg').innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${esc(text)}</div>`;
+            setTimeout(() => { document.getElementById('msg').innerHTML = ''; }, 5000);
+        }
+        function logout() { fetch('/api/logout', { method: 'POST' }).finally(() => location.href = '/login'); }
+
+        api('/api/me').then(r => r.json()).then(me => {
+            document.getElementById('whoami').textContent = me.full_name || me.username;
+            if (me.role !== 'owner' && me.role !== 'admin') location.href = '/';
+        }).catch(() => {});
+
+        function showTab(id) {
+            document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
+            document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === id));
+        }
+
+        // ---- Документы ----
+        function loadDocs() {
+            api('/documents').then(r => r.json()).then(d => {
+                const rows = (d.documents || []).map(doc => `
+                    <tr>
+                        <td>${esc(doc.filename)}</td>
+                        <td><span class="status ${esc(doc.status)}">${esc(doc.status)}</span>${doc.error ? `<div class="muted">${esc(doc.error)}</div>` : ''}</td>
+                        <td>${esc((doc.folders || []).join(', ') || '—')}</td>
+                        <td>${esc(doc.chunks ?? '—')}</td>
+                        <td>
+                            <button class="btn" onclick="reindexDoc('${esc(doc.filename)}')">Переиндексировать</button>
+                            <button class="btn danger" onclick="deleteDoc('${esc(doc.filename)}')">Удалить</button>
+                        </td>
+                    </tr>`).join('');
+                document.getElementById('docs-body').innerHTML = rows || '<tr><td colspan="5" class="muted">Пусто</td></tr>';
+            });
+        }
+        function uploadDoc() {
+            const f = document.getElementById('doc-file').files[0];
+            if (!f) return flash('Выберите файл', false);
+            const fd = new FormData(); fd.append('file', f);
+            flash('Загрузка…', true);
+            api('/documents/upload', { method: 'POST', body: fd }).then(r => r.json().then(d => ({ ok: r.ok, d })))
+                .then(({ ok, d }) => { flash(ok ? (d.duplicate ? d.message : 'Поставлено в очередь на индексацию') : (d.detail || 'Ошибка'), ok); loadDocs(); });
+        }
+        function reindexDoc(name) { api(`/documents/${encodeURIComponent(name)}/reanalyze`, { method: 'POST' }).then(() => { flash('Переанализ запущен', true); loadDocs(); }); }
+        function deleteDoc(name) { if (!confirm('Удалить ' + name + '?')) return; api(`/documents/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(() => { flash('Удалено', true); loadDocs(); }); }
+        function reanalyzeAll() { api('/documents/reanalyze', { method: 'POST' }).then(() => flash('Переанализ всей базы запущен', true)); }
+
+        // ---- Папки ----
+        function loadFolders() {
+            api('/folders').then(r => r.json()).then(d => {
+                const rows = (d.folders || []).map(f => `
+                    <tr>
+                        <td>${esc(f.name)}<div class="muted">${esc(f.slug)}</div></td>
+                        <td>${esc((f.criteria || []).join(', ') || '—')}</td>
+                        <td>${esc(f.documents ?? 0)}</td>
+                        <td>${f.enabled ? 'да' : 'нет'}</td>
+                        <td><button class="btn danger" onclick="deleteFolder('${esc(f.id)}')">Удалить</button></td>
+                    </tr>`).join('');
+                document.getElementById('folders-body').innerHTML = rows || '<tr><td colspan="5" class="muted">Пусто</td></tr>';
+            });
+        }
+        function createFolder() {
+            const name = document.getElementById('f-name').value.trim();
+            if (!name) return flash('Укажите название', false);
+            const criteria = document.getElementById('f-criteria').value.split(',').map(s => s.trim()).filter(Boolean);
+            api('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, description: document.getElementById('f-desc').value, criteria }) })
+                .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+                    flash(ok ? 'Папка создана' : (d.detail || 'Ошибка'), ok);
+                    if (ok) { document.getElementById('f-name').value = ''; document.getElementById('f-criteria').value = ''; document.getElementById('f-desc').value = ''; loadFolders(); }
+                });
+        }
+        function deleteFolder(id) { if (!confirm('Удалить папку? Документы останутся в базе.')) return; api(`/folders/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(() => { flash('Папка удалена', true); loadFolders(); }); }
+
+        // ---- Пользователи ----
+        function loadUsers() {
+            api('/users').then(r => r.json()).then(d => {
+                const rows = (d.users || []).map(u => `
+                    <tr>
+                        <td>${esc(u.full_name)}<div class="muted">${esc(u.position || '')}</div></td>
+                        <td>${esc(u.username || '—')}</td>
+                        <td>${esc(u.role)}</td>
+                        <td>
+                            <select onchange="setActive('${esc(u.id)}', this.value === 'true')">
+                                <option value="true" ${u.active ? 'selected' : ''}>активен</option>
+                                <option value="false" ${!u.active ? 'selected' : ''}>заблокирован</option>
+                            </select>
+                        </td>
+                        <td><button class="btn danger" onclick="deleteUser('${esc(u.id)}')">Удалить</button></td>
+                    </tr>`).join('');
+                document.getElementById('users-body').innerHTML = rows || '<tr><td colspan="5" class="muted">Пусто</td></tr>';
+            });
+        }
+        function createUser() {
+            const full_name = document.getElementById('u-fullname').value.trim();
+            if (!full_name) return flash('Укажите ФИО', false);
+            const body = { full_name, position: document.getElementById('u-position').value,
+                username: document.getElementById('u-username').value || null, password: document.getElementById('u-password').value || null };
+            api('/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+                .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+                    flash(ok ? 'Сотрудник создан' : (d.detail || 'Ошибка'), ok);
+                    if (ok) { ['u-fullname','u-position','u-username','u-password'].forEach(i => document.getElementById(i).value = ''); loadUsers(); }
+                });
+        }
+        function setActive(id, active) { api(`/users/${id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) }).then(() => flash('Обновлено', true)); }
+        function deleteUser(id) { if (!confirm('Удалить пользователя?')) return; api(`/users/${id}`, { method: 'DELETE' }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => { flash(ok ? 'Удалён' : (d.detail || 'Ошибка'), ok); loadUsers(); }); }
+
+        // ---- Вопросы ----
+        function loadQuestions() {
+            api('/questions?status=open').then(r => r.json()).then(d => {
+                document.getElementById('q-count').textContent = d.open_count ? `(${d.open_count})` : '';
+                const items = d.questions || [];
+                if (!items.length) { document.getElementById('questions-body').innerHTML = '<div class="muted">Открытых вопросов нет</div>'; return; }
+                document.getElementById('questions-body').innerHTML = items.map(q => `
+                    <div class="card" style="box-shadow:none;border:1px solid #e2e8f0;">
+                        <strong>${esc(q.question)}</strong>
+                        <div class="muted">${esc(q.user_name || '')} · ${esc(q.created_at || '')} · ${esc(q.reason || '')}</div>
+                        <textarea id="ans-${esc(q.id)}" rows="2" placeholder="Ответ сотруднику…"></textarea>
+                        <button class="primary btn" onclick="resolveQ('${esc(q.id)}')">Ответить</button>
+                    </div>`).join('');
+            });
+        }
+        function resolveQ(id) {
+            const answer = document.getElementById('ans-' + id).value.trim();
+            if (!answer) return flash('Введите ответ', false);
+            api(`/questions/${id}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer }) })
+                .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => { flash(ok ? 'Ответ отправлен' : (d.detail || 'Ошибка'), ok); loadQuestions(); });
+        }
+
+        loadDocs(); loadFolders(); loadUsers(); loadQuestions();
+        setInterval(() => { if (document.getElementById('docs').classList.contains('active')) loadDocs(); }, 8000);
+    </script>
+</body>
+</html>

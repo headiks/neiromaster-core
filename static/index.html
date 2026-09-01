@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>НейроМастер — помощник по регламентам</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 900px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #f5f7fa;
+        }
+        .page-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 10px;
+        }
+        h1 { color: #1e293b; margin: 0; font-size: 26px; }
+        .head-actions { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #475569; }
+        .admin-link, .head-btn {
+            color: #64748b;
+            font-size: 14px;
+            text-decoration: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 8px 14px;
+            background: none;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .admin-link:hover, .head-btn:hover { background: #f1f5f9; }
+
+        /* ---- Мой план адаптации ---- */
+        table.schedule {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            font-size: 14px;
+        }
+        table.schedule th, table.schedule td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: top;
+        }
+        table.schedule th { background: #f1f5f9; color: #334155; font-size: 13px; }
+        .msg-text { white-space: pre-wrap; color: #1e293b; }
+        .msg-meta { font-size: 12px; color: #94a3b8; margin-top: 6px; }
+        .plan-note {
+            background: #eff6ff;
+            border-left: 4px solid #3b82f6;
+            color: #1e40af;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .empty-hint { color: #94a3b8; font-size: 14px; padding: 10px 0; }
+        .toggle-btn {
+            background: none;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+            border-radius: 8px;
+            padding: 6px 14px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .toggle-btn:hover { background: #f1f5f9; }
+        dialog {
+            border: none;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 8px 30px rgba(15,23,42,0.2);
+            width: 320px;
+        }
+        dialog::backdrop { background: rgba(15,23,42,0.35); }
+        dialog label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
+        dialog input {
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 14px;
+            padding: 9px 11px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        h2.section-title {
+            color: #1e293b;
+            font-size: 20px;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 32px;
+        }
+        .new-dialog-btn {
+            background: none;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .new-dialog-btn:hover { background: #f1f5f9; }
+        .input-area { display: flex; gap: 10px; margin: 20px 0; }
+        #question-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        #ask-btn {
+            padding: 12px 28px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        #ask-btn:hover { background: #2563eb; }
+        #ask-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .card h3 { margin-top: 0; color: #0f172a; display: flex; justify-content: space-between; }
+        .badge { background: #e2e8f0; padding: 4px 12px; border-radius: 20px; font-size: 14px; }
+        .badge.escalate { background: #fecaca; color: #991b1b; }
+        .badge.rag { background: #bbf7d0; color: #14532d; }
+        .badge.scenario { background: #fde68a; color: #78350f; }
+        .badge.general { background: #dbeafe; color: #1e40af; }
+        .candidate { border-left: 4px solid #94a3b8; padding-left: 12px; margin: 10px 0; }
+        .candidate.relevant { border-left-color: #22c55e; background: #f0fdf4; }
+        .candidate .score { font-weight: bold; margin-right: 8px; }
+        .candidate .text { color: #1e293b; }
+        .answer {
+            background: #eef2ff;
+            padding: 16px;
+            border-radius: 8px;
+            border-left: 6px solid #3b82f6;
+            white-space: pre-wrap;
+        }
+        .time { color: #64748b; font-size: 14px; margin-top: 8px; }
+        .error { color: #dc2626; background: #fee2e2; padding: 12px; border-radius: 8px; }
+        #history { margin-top: 30px; }
+        .history-item { border-bottom: 1px solid #e2e8f0; padding: 16px 0; }
+        .history-item .q { font-weight: 600; }
+        .history-item .a { color: #1e293b; margin-top: 4px; }
+        .context-note {
+            background: #f5f3ff;
+            border-left: 4px solid #8b5cf6;
+            color: #5b21b6;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-top: 12px;
+        }
+    </style>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="app-page">
+    <div class="page-head">
+        <h1><svg class="nm-mark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18"/><circle cx="8" cy="9" r="1.5"/><circle cx="16" cy="9" r="1.5"/><circle cx="12" cy="16" r="1.5"/><path d="M9.7 9H14.3M8.84 10.48 11.16 14.52M15.16 10.48 12.84 14.52"/></svg> НейроМастер</h1>
+        <div class="head-actions">
+            <span id="whoami"></span>
+            <a class="admin-link" id="admin-link" href="/admin" style="display:none;"><i data-lucide="shield"></i> Админка</a>
+            <button class="head-btn" onclick="openPasswordDialog()"><i data-lucide="key-round"></i> Сменить пароль</button>
+            <button class="head-btn" onclick="logout()"><i data-lucide="log-out"></i> Выйти</button>
+        </div>
+    </div>
+
+    <div id="my-questions-block" style="margin-top:28px;display:none;">
+        <h2 class="section-title"><i data-lucide="messages-square"></i> Мои вопросы специалисту</h2>
+        <div id="my-questions"></div>
+    </div>
+
+    <div class="chat-header">
+        <h2 class="section-title"><i data-lucide="message-square"></i> Задать вопрос</h2>
+        <button class="new-dialog-btn" onclick="startNewDialog()" title="Забыть историю текущего диалога"><i data-lucide="refresh-cw"></i> Новый диалог</button>
+    </div>
+    <div class="input-area">
+        <input type="text" id="question-input" placeholder="Например: что положено из спецодежды?" />
+        <button id="ask-btn" onclick="ask()"><i data-lucide="send-horizontal"></i> Отправить</button>
+    </div>
+    <div id="result"></div>
+    <div id="history">
+        <h3><i data-lucide="history"></i> История</h3>
+        <div id="history-list"></div>
+    </div>
+
+    <dialog id="password-dialog">
+        <h3 style="margin-top:0;">Смена пароля</h3>
+        <label>Текущий пароль</label>
+        <input type="password" id="old-password" autocomplete="current-password">
+        <label>Новый пароль (от 8 символов)</label>
+        <input type="password" id="new-password" autocomplete="new-password">
+        <div class="error" id="password-error" style="display:none;margin-bottom:12px;"></div>
+        <div style="display:flex;gap:10px;">
+            <button class="primary-btn" style="flex:1;padding:9px;"
+                    onclick="submitPasswordChange()">Сменить</button>
+            <button class="head-btn" onclick="document.getElementById('password-dialog').close()">Отмена</button>
+        </div>
+    </dialog>
+
+    <script>
+        const resultDiv = document.getElementById('result');
+        const historyList = document.getElementById('history-list');
+        const input = document.getElementById('question-input');
+        const btn = document.getElementById('ask-btn');
+
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
+        }
+
+        /** fetch с единой обработкой протухшей сессии: 401 -> обратно на форму входа. */
+        function api(url, options) {
+            return fetch(url, options).then(res => {
+                if (res.status === 401) {
+                    window.location.href = '/login';
+                    throw new Error('Сессия истекла');
+                }
+                return res;
+            });
+        }
+
+        // ---------------- Профиль ----------------
+        api('/api/me').then(r => r.json()).then(me => {
+            document.getElementById('whoami').innerHTML = `<i data-lucide="user"></i> ${escapeHtml(me.full_name || me.username)}`;
+            if (me.role === 'owner' || me.role === 'admin') {
+                document.getElementById('admin-link').style.display = 'inline-block';
+            }
+        }).catch(() => {});
+
+        function logout() {
+            fetch('/api/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
+        }
+
+        function openPasswordDialog() {
+            document.getElementById('password-error').style.display = 'none';
+            document.getElementById('old-password').value = '';
+            document.getElementById('new-password').value = '';
+            document.getElementById('password-dialog').showModal();
+        }
+
+        function submitPasswordChange() {
+            const errorBox = document.getElementById('password-error');
+            api('/api/password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    old_password: document.getElementById('old-password').value,
+                    new_password: document.getElementById('new-password').value,
+                }),
+            }).then(res => res.json().then(data => ({ ok: res.ok, data })))
+              .then(({ ok, data }) => {
+                  if (!ok) {
+                      errorBox.textContent = data.detail || 'Не удалось сменить пароль';
+                      errorBox.style.display = 'block';
+                      return;
+                  }
+                  alert('Пароль изменён. Войдите заново.');
+                  window.location.href = '/login';
+              });
+        }
+
+        // ---------------- Мои вопросы специалисту (эскалации) ----------------
+        function loadMyQuestions() {
+            api('/api/my/questions').then(r => r.json()).then(d => {
+                const items = d.questions || [];
+                const block = document.getElementById('my-questions-block');
+                const box = document.getElementById('my-questions');
+                if (!items.length) { block.style.display = 'none'; return; }
+                block.style.display = 'block';
+                box.innerHTML = items.map(q => {
+                    const answered = q.status === 'resolved';
+                    const head = answered
+                        ? '<span class="status-badge indexed"><i data-lucide="check"></i> отвечено</span>'
+                        : '<span class="status-badge processing"><i data-lucide="clock"></i> ждёт ответа</span>';
+                    const body = answered
+                        ? `<div class="answer">${escapeHtml(q.answer)}</div>
+                           <small style="color:#94a3b8;">${escapeHtml(q.answered_by || '')} · ${escapeHtml(q.answered_at || '')}</small>`
+                        : `<div style="color:#64748b;font-size:14px;">Передано специалисту, ответ появится здесь.</div>`;
+                    return `<div class="card" style="margin-bottom:10px;">
+                        <div>${head}</div>
+                        <div style="margin:6px 0;"><strong>${escapeHtml(q.question)}</strong></div>
+                        ${body}
+                    </div>`;
+                }).join('');
+                refreshIcons();
+            }).catch(() => {});
+        }
+
+        loadMyQuestions();
+
+        // ----- Сессия хранится в localStorage, чтобы не сбрасываться при перезагрузке -----
+        function getSessionId() {
+            let sid = localStorage.getItem('ragSessionId');
+            if (!sid) {
+                sid = crypto.randomUUID ? crypto.randomUUID() : `sid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                localStorage.setItem('ragSessionId', sid);
+            }
+            return sid;
+        }
+
+        function startNewDialog() {
+            const sid = localStorage.getItem('ragSessionId');
+            if (sid) {
+                fetch(`/session/${encodeURIComponent(sid)}`, { method: 'DELETE' }).catch(() => {});
+            }
+            localStorage.removeItem('ragSessionId');
+            historyList.innerHTML = '';
+            resultDiv.innerHTML = '';
+            input.focus();
+        }
+
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
+
+        function ask() {
+            const question = input.value.trim();
+            if (!question) return;
+            btn.disabled = true;
+            resultDiv.innerHTML = '<i data-lucide="loader"></i> Обработка...';
+            input.value = '';
+
+            api('/ask', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question, session_id: getSessionId() })
+            })
+            .then(res => res.json())
+            .then(data => {
+                renderResult(data);
+                addHistory(data);
+                if (data.escalated) loadMyQuestions();
+                btn.disabled = false;
+            })
+            .catch(err => {
+                resultDiv.innerHTML = `<div class="error">Ошибка: ${err.message}</div>`;
+                btn.disabled = false;
+            });
+        }
+
+        // Ответ сотруднику: только сам ответ. Источники, названия документов,
+        // маршрут, фрагменты, тайминги и прочая внутренняя механика не показываются (ТЗ §25).
+        function renderResult(data) {
+            if (data.error) {
+                resultDiv.innerHTML = `<div class="error"><i data-lucide="triangle-alert"></i> ${escapeHtml(data.error)}</div>`;
+                refreshIcons();
+                return;
+            }
+
+            let html = `<div class="card"><h3>${escapeHtml(data.question)}</h3>`;
+
+            if (data.answer) {
+                html += `<div style="margin-top:12px;"><div class="answer">${escapeHtml(data.answer)}</div></div>`;
+            } else if (data.route === 'escalate') {
+                html += `<p style="margin-top:12px;"><i data-lucide="user-round"></i> Вопрос передан специалисту — ответ появится в разделе «Мои вопросы специалисту».</p>`;
+            } else if (data.route === 'general') {
+                html += `<p style="margin-top:12px;">Здравствуйте! Задайте вопрос по работе, регламентам или безопасности.</p>`;
+            } else {
+                html += `<p style="margin-top:12px;">Не нашёл точного ответа в базе. Уточните вопрос или обратитесь к наставнику — при необходимости он передаст его специалисту.</p>`;
+            }
+
+            html += `</div>`;
+            resultDiv.innerHTML = html;
+            refreshIcons();
+        }
+
+        function addHistory(data) {
+            const entry = document.createElement('div');
+            entry.className = 'history-item';
+            const answerText = data.answer || (data.route === 'escalate' ? 'Передано специалисту' : 'Ответ не найден');
+            entry.innerHTML = `
+                <div class="q"><i data-lucide="message-square-text"></i> ${escapeHtml(data.question)}</div>
+                <div class="a">${escapeHtml(answerText)}</div>
+            `;
+            historyList.prepend(entry);
+            refreshIcons();
+        }
+    </script>
+
+    <!-- Векторные иконки Lucide. refreshIcons() вызывается после AJAX-рендеров,
+         чтобы иконки в динамически вставленном HTML тоже отрисовывались. -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+        let _iconObserver = null;
+        function refreshIcons() {
+            if (!window.lucide) return;
+            if (_iconObserver) _iconObserver.disconnect();   // не ловим свои же вставки svg
+            lucide.createIcons({ attrs: { 'stroke-width': 1.5, width: 18, height: 18 } });
+            if (_iconObserver) _iconObserver.observe(document.body, { childList: true, subtree: true });
+        }
+        window.addEventListener('load', () => {
+            _iconObserver = new MutationObserver(() => refreshIcons());
+            refreshIcons();   // отрисовать иконки в текущем и во всём динамически вставляемом HTML
+        });
+    </script>
+</body>
+</html>

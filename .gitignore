@@ -1,0 +1,50 @@
+# --- Виртуальные окружения ---
+.venv/
+.venv313/
+venv/
+env/
+
+# --- Python кэш ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Логи ---
+*.log
+
+# --- Локальные настройки инструментов ---
+.claude/
+.idea/
+.vscode/
+
+# --- Рантайм-данные: НИКОГДА не коммитить ---
+# Здесь живут хэши паролей, персональные данные сотрудников, вопросы,
+# кэши docling и векторные артефакты. Каталог наполняется на сервере.
+# Оставляем только конфиг-семя смысловых папок.
+/data/*
+!/data/knowledge_seed.json
+
+# Явный список секретов/ПДн — на случай изменения структуры data/
+data/users.json
+data/admins.json
+data/*credential*
+data/*password*
+data/pending_questions*.json
+data/registry.json
+data/*.migrated
+data/*.tmp
+
+# --- Секреты и данные БД ---
+.env
+.env.production
+.env.local
+pg_data/
+qdrant_storage/
+*.db
+*.db-wal
+*.db-shm
+
+# --- Прочее ---
+*.tmp
+Thumbs.db
+.DS_Store

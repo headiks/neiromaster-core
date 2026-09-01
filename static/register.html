@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Регистрация — НейроМастер</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f7fa;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .card {
+            background: white;
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
+            padding: 32px;
+            width: 360px;
+        }
+        h1 { font-size: 20px; color: #0f172a; margin: 0 0 4px; }
+        .subtitle { color: #64748b; font-size: 14px; margin-bottom: 22px; }
+        label { display: block; font-size: 13px; color: #475569; margin-bottom: 5px; }
+        .hint { font-size: 12px; color: #94a3b8; margin: -12px 0 16px; }
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 15px;
+            margin-bottom: 16px;
+            font-family: inherit;
+        }
+        button {
+            width: 100%;
+            padding: 11px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 15px;
+            cursor: pointer;
+        }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .error, .success {
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 14px;
+            margin-bottom: 14px;
+            display: none;
+        }
+        .error { color: #b91c1c; background: #fee2e2; }
+        .success { color: #065f46; background: #d1fae5; }
+        .back { display: block; text-align: center; margin-top: 16px; font-size: 13px; color: #64748b; }
+    </style>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="auth-page">
+    <form class="card auth-card" id="register-form">
+        <svg class="nm-mark" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" style="margin-bottom:20px"><rect x="3" y="3" width="18" height="18"/><circle cx="8" cy="9" r="1.5"/><circle cx="16" cy="9" r="1.5"/><circle cx="12" cy="16" r="1.5"/><path d="M9.7 9H14.3M8.84 10.48 11.16 14.52M15.16 10.48 12.84 14.52"/></svg>
+        <p class="kicker">Регистрация сотрудника</p>
+        <h1>Новая учётная запись</h1>
+
+        <div class="error" id="error"></div>
+        <div class="success" id="success"></div>
+
+        <label for="full_name">ФИО</label>
+        <input type="text" id="full_name" autocomplete="name" placeholder="Иванов Иван Иванович" required>
+
+        <div style="display:flex;gap:12px;">
+            <div style="flex:1;">
+                <label for="position">Должность</label>
+                <input type="text" id="position" placeholder="Водитель">
+            </div>
+            <div style="flex:1;">
+                <label for="contact">Контакт</label>
+                <input type="text" id="contact" placeholder="telegram / email">
+            </div>
+        </div>
+
+        <label for="username">Логин</label>
+        <input type="text" id="username" autocomplete="username" placeholder="ivanov" required>
+        <div class="hint">Латинские буквы, цифры, точка, дефис, подчёркивание. От 3 символов.</div>
+
+        <label for="password">Пароль</label>
+        <input type="password" id="password" autocomplete="new-password" required>
+        <div class="hint">От 8 символов.</div>
+
+        <button type="submit" id="submit-btn"><i data-lucide="user-plus"></i> Зарегистрироваться</button>
+        <a class="back" href="/login">← Уже есть учётная запись</a>
+    </form>
+
+    <script>
+        const form = document.getElementById('register-form');
+        const errorBox = document.getElementById('error');
+        const successBox = document.getElementById('success');
+        const submitBtn = document.getElementById('submit-btn');
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            errorBox.style.display = 'none';
+            successBox.style.display = 'none';
+            submitBtn.disabled = true;
+
+            fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    full_name: document.getElementById('full_name').value,
+                    position: document.getElementById('position').value,
+                    contact: document.getElementById('contact').value,
+                    username: document.getElementById('username').value,
+                    password: document.getElementById('password').value,
+                }),
+            })
+                .then(res => res.json().then(data => ({ ok: res.ok, data })))
+                .then(({ ok, data }) => {
+                    if (!ok) {
+                        errorBox.textContent = data.detail || 'Не удалось зарегистрироваться';
+                        errorBox.style.display = 'block';
+                        submitBtn.disabled = false;
+                        return;
+                    }
+                    successBox.textContent = data.needs_approval
+                        ? 'Заявка отправлена. Войти можно будет после подтверждения администратором.'
+                        : 'Готово! Сейчас перенаправим на страницу входа.';
+                    successBox.style.display = 'block';
+                    form.querySelectorAll('input').forEach(i => { i.value = ''; });
+                    setTimeout(() => { window.location.href = '/login'; }, data.needs_approval ? 4000 : 1500);
+                })
+                .catch(err => {
+                    errorBox.textContent = `Ошибка сети: ${err.message}`;
+                    errorBox.style.display = 'block';
+                    submitBtn.disabled = false;
+                });
+        });
+    </script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>window.addEventListener('load', () => window.lucide && lucide.createIcons({ attrs: { 'stroke-width': 1.5, width: 18, height: 18 } }));</script>
+</body>
+</html>
