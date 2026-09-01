@@ -421,30 +421,53 @@
 
     <!-- ==================== КОНСТРУКТОР ПЛАНА ==================== -->
     <div class="tab-pane" id="pane-builder">
-        <h2 class="section-title"><i data-lucide="calendar-cog"></i> Готовые планы адаптации</h2>
+        <h2 class="section-title"><i data-lucide="calendar-cog"></i> Конструктор плана адаптации</h2>
 
-        <div class="stage-hint">
-            Планы определены заранее. Здесь можно посмотреть готовый план и его сообщения.
-            Назначить план сотруднику — на вкладке «Аккаунты» (поле «План адаптации»).
-        </div>
-
-        <div class="toolbar" style="margin-top:16px;">
+        <div class="toolbar">
             <div class="field">
-                <label>Готовый план</label>
+                <label>Готовый план (редактирование)</label>
                 <select id="plan-select" onchange="onPlanSelect()"><option value="">— выберите план —</option></select>
             </div>
-            <button class="primary-btn" id="rollout-btn" onclick="rolloutPlan()" style="display:none;">
-                <i data-lucide="sparkles"></i> Сгенерировать содержание по всем профессиям
-            </button>
-            <button class="ghost-btn" id="cancel-gen-btn" onclick="cancelGeneration()" style="display:none;">
-                <i data-lucide="x-circle"></i> Отменить
-            </button>
-            <span id="plan-status" style="color:#475569;font-size:14px;"></span>
+        </div>
+        <div class="stage-hint">
+            План можно редактировать (этапы, подэтапы, сроки, тексты) и сохранять.
+            Создание новых планов отключено — правьте существующий.
         </div>
 
-        <div class="stage-hint">
-            Кнопка назначит этот план всем сотрудникам и сгенерирует содержание под каждую
-            должность из штатного расписания. Запусти после загрузки штатки на вкладке «Штатное расписание».
+        <div class="card">
+            <div class="plan-meta">
+                <div class="field">
+                    <label>Название плана</label>
+                    <input type="text" id="plan-title" placeholder="Например: Адаптация водителя" oninput="planField('title', this.value)">
+                </div>
+                <div class="field">
+                    <label>Должность / роль</label>
+                    <input type="text" id="plan-role" placeholder="Водитель" oninput="planField('role', this.value)">
+                </div>
+                <div class="field">
+                    <label>Дата выхода (для предпросмотра)</label>
+                    <input type="date" id="plan-start" onchange="planField('start_date', this.value)">
+                </div>
+            </div>
+            <div class="stage-hint">
+                План — это шаблон. Дата здесь нужна только для предпросмотра дат;
+                у каждого сотрудника на вкладке «Сотрудники» своя дата выхода, и расписание
+                пересчитывается под неё автоматически.
+            </div>
+        </div>
+
+        <div id="stages-container"></div>
+
+        <div class="add-row">
+            <select id="stage-catalog-select"></select>
+            <button class="ghost-btn" onclick="addStageFromCatalog()">＋ Добавить этап</button>
+        </div>
+
+        <div class="toolbar" style="margin-top:24px;">
+            <button class="primary-btn" onclick="savePlan()"><i data-lucide="save"></i> Сохранить план</button>
+            <button class="primary-btn" id="generate-btn" onclick="generatePlan()"><i data-lucide="sparkles"></i> Сгенерировать ответы</button>
+            <button class="ghost-btn" id="cancel-gen-btn" onclick="cancelGeneration()" style="display:none;"><i data-lucide="x-circle"></i> Отменить генерацию</button>
+            <span id="plan-status" style="color:#475569;font-size:14px;"></span>
         </div>
 
         <div class="progress-wrap" id="progress-wrap" style="display:none;">
@@ -452,7 +475,6 @@
             <div class="progress-label" id="progress-label"></div>
         </div>
 
-        <div id="prof-view" style="margin-top:16px;"></div>
         <div id="schedule-result"></div>
     </div>
 
@@ -1267,14 +1289,39 @@
         loadFolders();
         scheduleDocPoll();
 
-        // ---------------- Готовые планы (только просмотр) ----------------
-        let plan = { plan_id: null };
+        // ---------------- Конструктор плана ----------------
+        let catalog = null;
+        let plan = emptyPlan();
         let builderLoaded = false;
+        let pollTimer = null;
+        let currentGenJob = null;
+
+        function emptyPlan() {
+            return { plan_id: null, title: '', role: '', start_date: '', stages: [] };
+        }
 
         function ensureBuilderLoaded() {
             if (builderLoaded) return;
             builderLoaded = true;
-            refreshPlanList();
+            Promise.all([
+                api('/catalog').then(r => r.json()),
+                api('/plans').then(r => r.json()),
+            ]).then(([cat, plans]) => {
+                catalog = cat;
+                fillStageCatalogSelect();
+                fillPlanSelect(plans.plans || []);
+                renderStages();
+            }).catch(err => {
+                document.getElementById('stages-container').innerHTML =
+                    `<div class="error">Не удалось загрузить каталог этапов: ${escapeHtml(err.message)}</div>`;
+            });
+        }
+
+        function fillStageCatalogSelect() {
+            const select = document.getElementById('stage-catalog-select');
+            select.innerHTML = catalog.stages
+                .map(s => `<option value="${s.id}">${escapeHtml(s.title)}</option>`).join('')
+                + `<option value="__custom__">— свой этап —</option>`;
         }
 
         function fillPlanSelect(plans) {
@@ -1289,111 +1336,468 @@
         function refreshPlanList() {
             return api('/plans').then(r => r.json()).then(d => {
                 fillPlanSelect(d.plans || []);
-                if (typeof fillEmployeePlanSelect === 'function' && document.getElementById('emp-plan_id')) {
-                    fillEmployeePlanSelect(d.plans || []);
-                }
+                fillEmployeePlanSelect(d.plans || []);
             });
         }
 
         function onPlanSelect() {
             const id = document.getElementById('plan-select').value;
-            plan.plan_id = id || null;
-            const box = document.getElementById('schedule-result');
-            document.getElementById('rollout-btn').style.display = id ? 'inline-flex' : 'none';
-            document.getElementById('prof-view').innerHTML = '';
-            if (!id) { box.innerHTML = ''; setStatus(''); return; }
-            box.innerHTML = '<div class="stage-hint">Загрузка плана…</div>';
-            loadProfessions();
-            loadScheduleIfAny();
+            if (!id) {
+                // Создание нового плана отключено — просто очищаем редактор.
+                plan = emptyPlan();
+                document.getElementById('stages-container').innerHTML = '';
+                document.getElementById('schedule-result').innerHTML = '';
+                fillPlanMeta();
+                setStatus('Выберите план для редактирования');
+                return;
+            }
+            api(`/plans/${encodeURIComponent(id)}`).then(r => r.json()).then(data => {
+                plan = data.plan;
+                fillPlanMeta();
+                renderStages();
+                document.getElementById('schedule-result').innerHTML = '';
+                loadScheduleIfAny();
+            });
         }
 
-        // Профессии, под которые уже сгенерировано содержание — переключатель просмотра.
-        function loadProfessions() {
-            if (!plan.plan_id) return;
-            api(`/plans/${encodeURIComponent(plan.plan_id)}/professions`).then(r => r.json()).then(d => {
-                const profs = d.professions || [];
-                const box = document.getElementById('prof-view');
-                if (!profs.length) { box.innerHTML = ''; return; }
-                box.innerHTML = `<label>Показать содержание для должности</label>
-                    <select id="prof-select" onchange="loadScheduleFor(this.value)">
-                        <option value="">— общее —</option>
-                        ${profs.map(p => `<option value="${escapeHtml(p.profession)}">${escapeHtml(p.profession)}</option>`).join('')}
-                    </select>`;
-            }).catch(() => {});
+        function newPlan() {
+            plan = emptyPlan();
+            document.getElementById('plan-select').value = '';
+            document.getElementById('schedule-result').innerHTML = '';
+            fillPlanMeta();
+            renderStages();
+            setStatus('');
         }
 
-        function loadScheduleFor(profession) {
-            if (!plan.plan_id) return;
-            const q = profession ? `?profession=${encodeURIComponent(profession)}` : '';
-            api(`/plans/${encodeURIComponent(plan.plan_id)}/schedule${q}`)
-                .then(res => res.ok ? res.json() : null)
-                .then(schedule => {
-                    if (schedule) renderSchedule(schedule);
-                    else document.getElementById('schedule-result').innerHTML =
-                        '<div class="stage-hint">Для этой должности расписание ещё не сгенерировано.</div>';
-                }).catch(() => {});
+        function fullTemplatePlan() {
+            const title = prompt('Название полного шаблона (единый для всех профессий):', 'Универсальный план адаптации');
+            if (title === null) return;
+            setStatus('Создаю полный шаблон…');
+            api('/plans/template' + (title.trim() ? '?title=' + encodeURIComponent(title.trim()) : ''), { method: 'POST' })
+                .then(r => r.json()).then(p => {
+                    plan = p;
+                    fillPlanMeta();
+                    renderStages();
+                    document.getElementById('schedule-result').innerHTML = '';
+                    refreshPlanList().then(() => { document.getElementById('plan-select').value = p.plan_id; });
+                    setStatus('Полный шаблон создан — редактируйте под задачу');
+                });
         }
 
-        // Назначить план всем сотрудникам + сгенерировать содержание по всем профессиям штатки.
-        function rolloutPlan() {
-            if (!plan.plan_id) return;
-            if (!confirm('Назначить этот план всем сотрудникам и сгенерировать содержание по всем должностям из штатки? Генерация идёт в фоне и может занять время.')) return;
-            document.getElementById('rollout-btn').disabled = true;
-            setStatus('Запуск генерации…');
-            apiJson(`/plans/${encodeURIComponent(plan.plan_id)}/rollout`, { method: 'POST' })
+        function deletePlan() {
+            if (!plan.plan_id) { newPlan(); return; }
+            if (!confirm(`Удалить план «${plan.title}» вместе со сгенерированным расписанием?`)) return;
+            api(`/plans/${encodeURIComponent(plan.plan_id)}`, { method: 'DELETE' })
+                .then(() => { newPlan(); refreshPlanList(); });
+        }
+
+        function duplicatePlan() {
+            if (!plan.plan_id) { setStatus('Сначала сохраните план, потом его можно дублировать'); return; }
+            const title = prompt('Название копии (под смежную должность):', `${plan.title} (копия)`);
+            if (title === null) return;  // отмена
+            const q = title.trim() ? `?title=${encodeURIComponent(title.trim())}` : '';
+            apiJson(`/plans/${encodeURIComponent(plan.plan_id)}/duplicate${q}`, { method: 'POST' })
                 .then(({ ok, data }) => {
-                    document.getElementById('rollout-btn').disabled = false;
-                    if (!ok) { setStatus(data.detail || 'Не удалось запустить генерацию'); return; }
-                    setStatus('Генерация запущена');
-                    pollJob(data.job_id);
-                }).catch(err => { document.getElementById('rollout-btn').disabled = false; setStatus(err.message); });
+                    if (!ok) { setStatus(data.detail || 'Не удалось дублировать план'); return; }
+                    plan = data;
+                    fillPlanMeta();
+                    renderStages();
+                    refreshPlanList().then(() => {
+                        document.getElementById('plan-select').value = data.plan_id;
+                    });
+                    setStatus('Создана копия — отредактируйте под должность и сохраните');
+                });
         }
 
-        let genPollTimer = null, currentGenJob = null;
+        function fillPlanMeta() {
+            document.getElementById('plan-title').value = plan.title || '';
+            document.getElementById('plan-role').value = plan.role || '';
+            document.getElementById('plan-start').value = plan.start_date || '';
+        }
+
+        function planField(field, value) { plan[field] = value; }
+        function setStatus(text) { document.getElementById('plan-status').textContent = text; }
+
+        const UNIT_TITLES = { hours: 'часы', days: 'дни', weeks: 'недели', months: 'месяцы' };
+        const UNIT_DAYS = { hours: 0, days: 1, weeks: 7, months: 30 };
+
+        function stageSpanDays(duration) {
+            const value = Math.max(1, parseInt(duration.value, 10) || 1);
+            if (duration.unit === 'hours') return Math.max(1, Math.ceil(value / 24));
+            return Math.max(1, value * (UNIT_DAYS[duration.unit] || 1));
+        }
+
+        function dayChoiceAllowed(duration) { return duration.unit !== 'hours'; }
+
+        function computeOffsets() {
+            const offsets = {};
+            const before = plan.stages.filter(s => s.anchor === 'before_start');
+            const after = plan.stages.filter(s => s.anchor !== 'before_start');
+            let cursor = -before.reduce((sum, s) => sum + stageSpanDays(s.duration), 0);
+            before.forEach(s => { offsets[s.uid] = cursor; cursor += stageSpanDays(s.duration); });
+            cursor = 0;
+            after.forEach(s => { offsets[s.uid] = cursor; cursor += stageSpanDays(s.duration); });
+            return offsets;
+        }
+
+        function shiftDate(startDate, offsetDays) {
+            const d = new Date(`${startDate}T00:00:00`);
+            d.setDate(d.getDate() + offsetDays);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        function sendDateLabel(offsetDays, time) {
+            if (!plan.start_date) return `${offsetDays >= 0 ? '+' : ''}${offsetDays} дн. от даты выхода, ${time}`;
+            return `${shiftDate(plan.start_date, offsetDays)} ${time}`;
+        }
+
+        let uidCounter = 0;
+        function nextUid(prefix) { uidCounter += 1; return `${prefix}${uidCounter}`; }
+
+        function addStageFromCatalog() {
+            const id = document.getElementById('stage-catalog-select').value;
+            if (id === '__custom__') {
+                plan.stages.push({
+                    uid: nextUid('u'), catalog_id: null, title: 'Новый этап', description: '',
+                    anchor: 'from_start', duration: { value: 1, unit: 'days' }, substages: [],
+                });
+            } else {
+                const template = catalog.stages.find(s => s.id === id);
+                if (!template) return;
+                plan.stages.push({
+                    uid: nextUid('u'),
+                    catalog_id: template.id,
+                    title: template.title,
+                    description: template.description,
+                    anchor: template.anchor,
+                    duration: { ...template.default_duration },
+                    substages: [],
+                });
+            }
+            renderStages();
+        }
+
+        function removeStage(index) { plan.stages.splice(index, 1); renderStages(); }
+
+        function moveStage(index, delta) {
+            const target = index + delta;
+            if (target < 0 || target >= plan.stages.length) return;
+            const [item] = plan.stages.splice(index, 1);
+            plan.stages.splice(target, 0, item);
+            renderStages();
+        }
+
+        function stageField(index, field, value) { plan.stages[index][field] = value; renderStages(); }
+
+        function durationField(index, field, value) {
+            plan.stages[index].duration[field] = field === 'value' ? (parseInt(value, 10) || 1) : value;
+            const span = stageSpanDays(plan.stages[index].duration);
+            plan.stages[index].substages.forEach(sub => {
+                sub.schedule.day = Math.max(1, Math.min(span, sub.schedule.day || 1));
+            });
+            renderStages();
+        }
+
+        function substageTemplates(stage) {
+            if (!stage.catalog_id || !catalog) return [];
+            const found = catalog.stages.find(s => s.id === stage.catalog_id);
+            return found ? found.substage_templates : [];
+        }
+
+        function addSubstage(stageIndex) {
+            const stage = plan.stages[stageIndex];
+            const select = document.getElementById(`sub-template-${stageIndex}`);
+            const value = select ? select.value : '__custom__';
+            const template = substageTemplates(stage).find(t => t.id === value);
+            if (template) {
+                stage.substages.push({
+                    uid: nextUid('s'), catalog_id: template.id, title: template.title,
+                    kind: template.kind, brief: template.brief, source: 'template',
+                    tags: template.tags || [],
+                    schedule: { day: 1, time: template.default_time || '09:00' },
+                });
+            } else {
+                stage.substages.push({
+                    uid: nextUid('s'), catalog_id: null, title: 'Новый подэтап',
+                    kind: 'message', brief: '', source: 'manual', tags: [],
+                    schedule: { day: 1, time: '09:00' },
+                });
+            }
+            renderStages();
+        }
+
+        function removeSubstage(stageIndex, subIndex) {
+            plan.stages[stageIndex].substages.splice(subIndex, 1);
+            renderStages();
+        }
+
+        function moveSubstage(stageIndex, subIndex, delta) {
+            const subs = plan.stages[stageIndex].substages;
+            const target = subIndex + delta;
+            if (target < 0 || target >= subs.length) return;
+            const [item] = subs.splice(subIndex, 1);
+            subs.splice(target, 0, item);
+            renderStages();
+        }
+
+        function subField(stageIndex, subIndex, field, value) {
+            const sub = plan.stages[stageIndex].substages[subIndex];
+            if (field === 'brief' || field === 'title') {
+                sub[field] = value;
+                if (field === 'brief') sub.source = 'manual';
+                return; // без перерисовки, чтобы не терять фокус ввода
+            }
+            sub[field] = value;
+            renderStages();
+        }
+
+        function subSchedule(stageIndex, subIndex, field, value) {
+            const sub = plan.stages[stageIndex].substages[subIndex];
+            sub.schedule[field] = field === 'day' ? (parseInt(value, 10) || 1) : value;
+            renderStages();
+        }
+
+        function renderStages() {
+            const container = document.getElementById('stages-container');
+            if (!plan.stages.length) {
+                container.innerHTML = `<div class="empty-hint">Этапов пока нет. Выберите этап из списка ниже и добавьте его в план.</div>`;
+                return;
+            }
+            plan.stages.forEach(s => { if (!s.uid) s.uid = nextUid('u'); });
+            const offsets = computeOffsets();
+
+            container.innerHTML = plan.stages.map((stage, stageIndex) => {
+                const span = stageSpanDays(stage.duration);
+                const dayChoice = dayChoiceAllowed(stage.duration);
+                const offset = offsets[stage.uid] || 0;
+                const templateOptions = substageTemplates(stage).map(t =>
+                    `<option value="${t.id}">${escapeHtml(t.title)}</option>`).join('')
+                    + `<option value="__custom__">— свой подэтап (текст вручную) —</option>`;
+
+                const substagesHtml = stage.substages.map((sub, subIndex) => {
+                    const dayOptions = Array.from({ length: span }, (_, i) =>
+                        `<option value="${i + 1}" ${sub.schedule.day === i + 1 ? 'selected' : ''}>День ${i + 1}</option>`
+                    ).join('');
+                    const offsetDays = offset + (dayChoice ? (sub.schedule.day || 1) - 1 : 0);
+                    const kindOptions = catalog.substage_kinds.map(k =>
+                        `<option value="${k.id}" ${sub.kind === k.id ? 'selected' : ''}>${escapeHtml(k.title)}</option>`
+                    ).join('');
+
+                    return `
+                        <div class="sub-item">
+                            <div class="sub-head">
+                                <span style="color:#94a3b8;">${subIndex + 1}.</span>
+                                <input type="text" value="${escapeHtml(sub.title)}"
+                                       oninput="subField(${stageIndex}, ${subIndex}, 'title', this.value)">
+                                <button class="icon-btn" onclick="moveSubstage(${stageIndex}, ${subIndex}, -1)"><i data-lucide="chevron-up"></i></button>
+                                <button class="icon-btn" onclick="moveSubstage(${stageIndex}, ${subIndex}, 1)"><i data-lucide="chevron-down"></i></button>
+                                <button class="icon-btn danger" onclick="removeSubstage(${stageIndex}, ${subIndex})"><i data-lucide="x"></i></button>
+                            </div>
+                            <div style="margin-top:10px;">
+                                <label style="font-size:12px;color:#64748b;">Что должен написать бот (основа для генерации по документам)</label>
+                                <textarea oninput="subField(${stageIndex}, ${subIndex}, 'brief', this.value)"
+                                          placeholder="Опишите, о чём сообщение. Текст можно взять из шаблона или написать свой.">${escapeHtml(sub.brief)}</textarea>
+                            </div>
+                            <div class="sub-grid">
+                                <div class="field">
+                                    <label>Тип</label>
+                                    <select onchange="subField(${stageIndex}, ${subIndex}, 'kind', this.value)">${kindOptions}</select>
+                                </div>
+                                <div class="field">
+                                    <label>День внутри этапа</label>
+                                    <select ${dayChoice ? '' : 'disabled'}
+                                            onchange="subSchedule(${stageIndex}, ${subIndex}, 'day', this.value)">
+                                        ${dayChoice ? dayOptions : '<option>— этап задан в часах —</option>'}
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label>Время</label>
+                                    <input type="time" value="${escapeHtml(sub.schedule.time)}"
+                                           onchange="subSchedule(${stageIndex}, ${subIndex}, 'time', this.value)">
+                                </div>
+                                <div class="sub-when"><i data-lucide="calendar-days"></i> ${escapeHtml(sendDateLabel(offsetDays, sub.schedule.time))}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                const unitOptions = Object.entries(UNIT_TITLES).map(([id, title]) =>
+                    `<option value="${id}" ${stage.duration.unit === id ? 'selected' : ''}>${title}</option>`).join('');
+
+                return `
+                    <div class="stage-card">
+                        <div class="stage-head">
+                            <div style="flex:1;">
+                                <input type="text" class="stage-title-input" value="${escapeHtml(stage.title)}"
+                                       oninput="plan.stages[${stageIndex}].title = this.value">
+                            </div>
+                            <div>
+                                <button class="icon-btn" onclick="moveStage(${stageIndex}, -1)"><i data-lucide="chevron-up"></i></button>
+                                <button class="icon-btn" onclick="moveStage(${stageIndex}, 1)"><i data-lucide="chevron-down"></i></button>
+                                <button class="icon-btn danger" onclick="removeStage(${stageIndex})">Удалить этап</button>
+                            </div>
+                        </div>
+                        ${stage.description ? `<div class="stage-hint">${escapeHtml(stage.description)}</div>` : ''}
+                        <div class="stage-controls">
+                            <div class="field">
+                                <label>Длительность</label>
+                                <input type="number" min="1" style="width:90px;" value="${stage.duration.value}"
+                                       onchange="durationField(${stageIndex}, 'value', this.value)">
+                            </div>
+                            <div class="field">
+                                <label>Единица</label>
+                                <select onchange="durationField(${stageIndex}, 'unit', this.value)">${unitOptions}</select>
+                            </div>
+                            <div class="field">
+                                <label>Отсчёт</label>
+                                <select onchange="stageField(${stageIndex}, 'anchor', this.value)">
+                                    <option value="from_start" ${stage.anchor !== 'before_start' ? 'selected' : ''}>от даты выхода</option>
+                                    <option value="before_start" ${stage.anchor === 'before_start' ? 'selected' : ''}>до выхода на работу</option>
+                                </select>
+                            </div>
+                            <div class="stage-hint">
+                                ${span} кал. дн. · старт этапа ${offset >= 0 ? '+' : ''}${offset} дн. от даты выхода
+                                ${dayChoice ? '' : ' · день не выбирается, только время'}
+                            </div>
+                        </div>
+
+                        <div style="margin-top:14px;">${substagesHtml || '<div class="empty-hint">Подэтапов пока нет.</div>'}</div>
+
+                        <div class="add-row">
+                            <select id="sub-template-${stageIndex}">${templateOptions}</select>
+                            <button class="ghost-btn" onclick="addSubstage(${stageIndex})">＋ Добавить подэтап</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function planPayload() {
+            return {
+                title: plan.title || 'План адаптации',
+                role: plan.role || '',
+                start_date: plan.start_date || null,
+                stages: plan.stages.map(stage => ({
+                    id: stage.id || null,
+                    catalog_id: stage.catalog_id,
+                    title: stage.title,
+                    description: stage.description || '',
+                    anchor: stage.anchor,
+                    duration: stage.duration,
+                    substages: stage.substages.map(sub => ({
+                        id: sub.id || null,
+                        catalog_id: sub.catalog_id,
+                        title: sub.title,
+                        kind: sub.kind,
+                        brief: sub.brief,
+                        source: sub.source,
+                        tags: sub.tags || [],
+                        schedule: sub.schedule,
+                    })),
+                })),
+            };
+        }
+
+        function savePlan() {
+            // Создание нового плана отключено — редактируем только выбранный существующий.
+            if (!plan.plan_id) {
+                setStatus('Выберите план для редактирования — создание нового отключено');
+                return Promise.reject(new Error('план не выбран'));
+            }
+            setStatus('Сохранение...');
+            return api(`/plans/${encodeURIComponent(plan.plan_id)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(planPayload()),
+            })
+                .then(res => res.json())
+                .then(saved => {
+                    const uids = plan.stages.map(s => ({ uid: s.uid, subs: s.substages.map(x => x.uid) }));
+                    plan = saved;
+                    plan.stages.forEach((stage, i) => {
+                        stage.uid = (uids[i] || {}).uid || nextUid('u');
+                        stage.substages.forEach((sub, j) => {
+                            sub.uid = ((uids[i] || {}).subs || [])[j] || nextUid('s');
+                        });
+                    });
+                    fillPlanMeta();
+                    renderStages();
+                    setStatus(`Сохранено: ${saved.title}`);
+                    return refreshPlanList().then(() => {
+                        document.getElementById('plan-select').value = saved.plan_id;
+                    });
+                })
+                .catch(err => setStatus(`Ошибка сохранения: ${err.message}`));
+        }
+
+        function generatePlan() {
+            if (!plan.stages.some(s => s.substages.length)) {
+                setStatus('Добавьте хотя бы один подэтап.');
+                return;
+            }
+            document.getElementById('generate-btn').disabled = true;
+            savePlan().then(() =>
+                apiJson(`/plans/${encodeURIComponent(plan.plan_id)}/generate`, { method: 'POST' })
+            ).then(({ ok, data }) => {
+                if (!ok) {
+                    setStatus(`${data.detail || 'Не удалось запустить генерацию'}`);
+                    document.getElementById('generate-btn').disabled = false;
+                    return;
+                }
+                setStatus('Генерация запущена');
+                currentGenJob = data.job_id;
+                document.getElementById('cancel-gen-btn').style.display = '';
+                pollJob(data.job_id);
+            }).catch(err => {
+                setStatus(`${err.message}`);
+                document.getElementById('generate-btn').disabled = false;
+            });
+        }
+
         function pollJob(jobId) {
-            currentGenJob = jobId;
-            document.getElementById('progress-wrap').style.display = 'block';
-            document.getElementById('cancel-gen-btn').style.display = 'inline-flex';
-            clearInterval(genPollTimer);
-            genPollTimer = setInterval(() => {
+            const wrap = document.getElementById('progress-wrap');
+            const fill = document.getElementById('progress-fill');
+            const label = document.getElementById('progress-label');
+            wrap.style.display = 'block';
+
+            clearInterval(pollTimer);
+            pollTimer = setInterval(() => {
                 api(`/jobs/${encodeURIComponent(jobId)}`).then(r => r.json()).then(job => {
-                    const total = job.total || 0, done = job.done || 0;
-                    const pct = total ? Math.round(done / total * 100) : 0;
-                    document.getElementById('progress-fill').style.width = pct + '%';
-                    document.getElementById('progress-label').textContent =
-                        `${done}/${total} · профессий: ${job.professions ?? '—'} · ошибок: ${job.errors ?? 0}`;
-                    if (job.status === 'done' || job.status === 'cancelled' || job.status === 'error') {
-                        clearInterval(genPollTimer);
+                    const percent = job.total ? Math.round(100 * job.done / job.total) : 0;
+                    fill.style.width = `${percent}%`;
+                    label.textContent = job.status === 'running'
+                        ? `Подэтап ${job.done} из ${job.total}${job.current ? ' · ' + job.current : ''}${job.errors ? ' · ошибок: ' + job.errors : ''}`
+                        : `Статус: ${job.status} · ${job.done} из ${job.total}${job.errors ? ' · ошибок: ' + job.errors : ''}`;
+
+                    if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
+                        clearInterval(pollTimer);
+                        currentGenJob = null;
+                        document.getElementById('generate-btn').disabled = false;
                         document.getElementById('cancel-gen-btn').style.display = 'none';
                         setStatus(job.status === 'done' ? 'Генерация завершена'
-                                 : job.status === 'cancelled' ? 'Генерация отменена' : (job.error || 'Ошибка генерации'));
-                        loadProfessions();
+                            : job.status === 'cancelled' ? 'Генерация отменена (сгенерированное сохранено)'
+                            : `${job.error}`);
                         loadScheduleIfAny();
+                        refreshPlanList();
                     }
-                }).catch(() => {});
+                }).catch(() => clearInterval(pollTimer));
             }, 1500);
         }
 
         function cancelGeneration() {
             if (!currentGenJob) return;
+            const btn = document.getElementById('cancel-gen-btn');
+            btn.disabled = true;
+            setStatus('Отмена…');
             api(`/jobs/${encodeURIComponent(currentGenJob)}/cancel`, { method: 'POST' })
-                .then(() => setStatus('Отмена…')).catch(() => {});
-        }
-
-        function setStatus(text) {
-            const el = document.getElementById('plan-status');
-            if (el) el.textContent = text || '';
+                .finally(() => { btn.disabled = false; });
         }
 
         function loadScheduleIfAny() {
             if (!plan.plan_id) return;
             api(`/plans/${encodeURIComponent(plan.plan_id)}/schedule`)
                 .then(res => res.ok ? res.json() : null)
-                .then(schedule => {
-                    if (schedule) renderSchedule(schedule);
-                    else document.getElementById('schedule-result').innerHTML =
-                        '<div class="stage-hint">У плана ещё нет готовых сообщений.</div>';
-                })
+                .then(schedule => { if (schedule) renderSchedule(schedule); })
                 .catch(() => {});
         }
 
@@ -1404,7 +1808,7 @@
             return `${offset >= 0 ? '+' : ''}${offset} дн. (${anchor}), ${msg.schedule.time}`;
         }
 
-        function messageRows(messages) {
+        function messageRows(messages, withRegenerate) {
             return (messages || []).map(msg => `
                 <tr>
                     <td>${msg.stage.order}. ${escapeHtml(msg.stage.title)}</td>
@@ -1412,10 +1816,13 @@
                     <td style="white-space:nowrap;">${escapeHtml(whenLabel(msg))}</td>
                     <td>
                         <div class="msg-text">${escapeHtml(msg.content.text || '—')}</div>
+                        ${msg.error ? `<div class="msg-error"><i data-lucide="triangle-alert"></i> ${escapeHtml(msg.error)}</div>` : ''}
                         <div class="msg-meta">
                             ${msg.folders_used && msg.folders_used.length ? '' + escapeHtml(msg.folders_used.join(', ')) + ' · ' : ''}
                             ${msg.sources && msg.sources.length ? '' + escapeHtml([...new Set(msg.sources.map(s => s.source))].join(', ')) : ''}
                         </div>
+                        ${withRegenerate ? `<button class="icon-btn" style="margin-top:8px;"
+                                onclick="regenerate('${escapeHtml(msg.message_id)}')"><i data-lucide="refresh-cw"></i> Перегенерировать</button>` : ''}
                     </td>
                 </tr>
             `).join('');
@@ -1424,19 +1831,27 @@
         function renderSchedule(schedule) {
             const base = `/plans/${encodeURIComponent(schedule.plan_id)}/export`;
             document.getElementById('schedule-result').innerHTML = `
-                <h2 class="section-title"><i data-lucide="calendar-check"></i> Сообщения плана</h2>
+                <h2 class="section-title"><i data-lucide="upload"></i> Сгенерированное расписание шаблона</h2>
                 <div class="export-links">
-                    <a href="${base}/schedule.md" download><i data-lucide="download"></i> schedule.md</a>
-                    <a href="${base}/schedule.json" download><i data-lucide="download"></i> schedule.json</a>
-                    <a href="${base}/plan.md" download><i data-lucide="download"></i> plan.md</a>
-                    <a href="${base}/plan.json" download><i data-lucide="download"></i> plan.json</a>
+                    <a href="${base}/schedule.md" download><i data-lucide="download"></i> schedule.md — расписание с ответами</a>
+                    <a href="${base}/schedule.json" download><i data-lucide="download"></i> schedule.json — для мессенджеров и приложения</a>
+                    <a href="${base}/plan.md" download><i data-lucide="download"></i> plan.md — план в формате для LLM</a>
+                    <a href="${base}/plan.json" download><i data-lucide="download"></i> plan.json — канонический план</a>
                 </div>
                 <table class="schedule">
-                    <thead><tr><th>Этап</th><th>Подэтап</th><th>Дата и время</th><th>Сообщение</th></tr></thead>
-                    <tbody>${messageRows(schedule.messages)}</tbody>
+                    <thead><tr><th>Этап</th><th>Подэтап</th><th>Дата и время</th><th>Ответ</th></tr></thead>
+                    <tbody>${messageRows(schedule.messages, true)}</tbody>
                 </table>
             `;
-            if (window.refreshIcons) refreshIcons();
+        }
+
+        function regenerate(messageId) {
+            setStatus(`Перегенерация: ${messageId}`);
+            api(`/plans/${encodeURIComponent(plan.plan_id)}/messages/${encodeURIComponent(messageId)}/regenerate`,
+                { method: 'POST' })
+                .then(res => res.json())
+                .then(() => { setStatus('Подэтап обновлён'); loadScheduleIfAny(); })
+                .catch(err => setStatus(`${err.message}`));
         }
 
         // ---------------- Пользователи ----------------
