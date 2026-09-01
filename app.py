@@ -5,27 +5,42 @@ import threading
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Request, Response
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
 from pydantic import BaseModel
+import uvicorn
 
 from rag import handle_question, HISTORY_WINDOW
 from config import MAX_UPLOAD_BYTES
 import db
 import indexing
+import planner
 import auth
 import users
 import questions
 import folders
+import stages
 import classify
+import staffing
+import employees as adaptation
+import documents
+from indexing import DOCS_DIR
 
 
 def _bg(fn, *args):
     """Фоновая задача (реанализ базы и т.п. — может быть долгой из-за LLM)."""
     threading.Thread(target=fn, args=args, daemon=True).start()
 
+
+def _current_stage_ids(user: dict) -> list:
+    """Текущий этап обучения пользователя (ТЗ §6) — приоритет поиска, не фильтр.
+    ponytail: пока прогресс обучения по этапам-блокам отдельно не трекается, отдаём
+    пусто (поиск работает без буста). Точка интеграции, когда появится прогресс:
+    вернуть id этапов из stages, на которых сейчас пользователь."""
+    return []
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -35,19 +50,20 @@ STATIC_DIR = BASE_DIR / "static"
 async def lifespan(app: FastAPI):
     # Схема БД (PostgreSQL) — до первого обращения к аккаунтам
     db.init_schema()
-    # Стартовая структура знаний (смысловые папки) из data/knowledge_seed.json —
-    # только если таблица пуста. Дальше папками управляет человек.
+    # Стартовая структура знаний (этапы + смысловые папки) из data/knowledge_seed.json —
+    # только если таблицы пусты. Получена из исходного Excel; дальше ей управляет человек.
     seed_path = BASE_DIR / "data" / "knowledge_seed.json"
     if not seed_path.exists():
         print(f"ВНИМАНИЕ: нет файла сида {seed_path} — стартовые папки не заведены.")
     else:
         try:
             seed = json.loads(seed_path.read_text(encoding="utf-8"))
+            s = stages.seed_if_empty(seed.get("stages", []))
             f = folders.seed_if_empty(seed.get("folders", []))
-            print(f"Стартовая структура знаний: засеяно папок {f} "
+            print(f"Стартовая структура знаний: засеяно этапов {s}, папок {f} "
                   f"(в БД сейчас: папок {len(folders.list_folders())}).")
         except Exception as e:
-            # Не роняем старт из-за сида — папки можно засеять `python seed_knowledge.py`.
+            # Не роняем старт из-за сида — логируем, папки можно засеять `python seed_knowledge.py`.
             print(f"ОШИБКА посева стартовой структуры: {e}")
     # Векторная коллекция — до первого /ask или загрузки файла
     indexing.create_collection(recreate=False)
@@ -57,10 +73,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Предупреждение: векторы папок не построены (Qdrant/Ollama?): {e}")
 
-    # Разовая миграция со старого файлового хранилища аккаунтов в БД
+    # Пайплайн разметки docpipe: таблицы PG + версия плана из каталога адаптации.
+    try:
+        import docpipe
+        docpipe.init_schema()
+        docpipe.sync_plan_from_catalog()
+    except Exception as e:
+        print(f"Предупреждение: пайплайн разметки docpipe не инициализирован: {e}")
+
+    # Разовые миграции со старых файловых хранилищ в БД
     moved_json = users.migrate_legacy_json_users()
     if moved_json:
         print(f"Перенесено аккаунтов из users.json в БД: {moved_json}")
+    moved = users.migrate_legacy_employees()
+    if moved:
+        print(f"Перенесено записей сотрудников из employees.json в БД: {moved}")
 
     initial = users.ensure_owner()
     if initial:
@@ -71,6 +98,13 @@ async def lifespan(app: FastAPI):
         print(f"  Дубль записан в {users.INITIAL_CREDENTIALS_PATH}")
         print("  При первом входе система попросит задать свои логин и пароль.")
         print("=" * 70)
+
+    # Единый реестр метаданных документов (PostgreSQL): дедуп по хэшу + экран
+    # «этапы ↔ документы». Таблица создаётся, если её ещё нет.
+    try:
+        documents.init()
+    except Exception as e:
+        print(f"Предупреждение: реестр документов не инициализирован: {e}")
     yield
 
 
@@ -219,7 +253,7 @@ def _set_session_cookie(response: Response, token: str):
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    """Личный кабинет сотрудника: чат с ассистентом по регламентам."""
+    """Личный кабинет сотрудника: чат с ассистентом и свой план адаптации."""
     user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
     if user is None:
         return RedirectResponse(url="/login", status_code=303)
@@ -251,7 +285,7 @@ async def setup_page(request: Request):
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page(request: Request):
-    """Админка: база знаний (документы, смысловые папки), пользователи, эскалации."""
+    """Админка: база знаний, конструктор плана, пользователи."""
     user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
     if user is None:
         return RedirectResponse(url="/login", status_code=303)
@@ -260,6 +294,32 @@ async def admin_page(request: Request):
     if not users.is_admin(user):
         return RedirectResponse(url="/", status_code=303)
     return HTMLResponse(_read_static("admin.html"))
+
+
+@app.get("/documents-board", response_class=HTMLResponse)
+async def documents_board_page(request: Request):
+    """Экран «этапы ↔ документы»: какие документы закреплены за этапами и подэтапами."""
+    user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if user.get("must_change_credentials"):
+        return RedirectResponse(url="/setup", status_code=303)
+    if not users.is_admin(user):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(_read_static("documents_board.html"))
+
+
+@app.get("/documents-table", response_class=HTMLResponse)
+async def documents_table_page(request: Request):
+    """Табличный просмотр метаданных обработанных файлов (реестр documents)."""
+    user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if user.get("must_change_credentials"):
+        return RedirectResponse(url="/setup", status_code=303)
+    if not users.is_admin(user):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(_read_static("documents_table.html"))
 
 
 # ---------- Вход, регистрация, свой профиль ----------
@@ -337,6 +397,15 @@ async def api_change_password(req: PasswordChangeRequest, response: Response,
     return {"changed": True}
 
 
+@app.get("/api/my/schedule", dependencies=logged_in)
+async def api_my_schedule(user: dict = Depends(require_setup_done)):
+    """Свой план адаптации — то, что сотрудник видит в личном кабинете."""
+    try:
+        return adaptation.build_employee_schedule(user)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.get("/api/my/questions", dependencies=logged_in)
 async def api_my_questions(user: dict = Depends(require_setup_done)):
     """Свои эскалированные вопросы и ответы на них от администратора."""
@@ -386,7 +455,8 @@ def ask(req: QuestionRequest, user: dict = Depends(require_setup_done)):
     history = get_recent_history(session_id)
 
     try:
-        result = handle_question(question, history=history, position=user.get("position"))
+        result = handle_question(question, history=history, current_stage_ids=_current_stage_ids(user),
+                                 position=user.get("position"))
         result = _route_to_human(result, user)
         result["elapsed_time"] = time.time() - start
         result["session_id"] = session_id
@@ -430,12 +500,43 @@ async def get_documents():
     return {"documents": indexing.list_documents()}
 
 
+@app.get("/documents/board", dependencies=admin_only)
+async def get_documents_board():
+    """Данные экрана «этапы ↔ документы»: этапы, подэтапы и относящиеся к ним
+    документы (по метаданным из реестра) + документы без уверенной привязки."""
+    return documents.board()
+
+
+@app.get("/documents/table", dependencies=admin_only)
+async def get_documents_table():
+    """Табличные данные по обработанным файлам из реестра метаданных (PostgreSQL):
+    все поля, кроме тяжёлого вектора (у него — только длина)."""
+    return {"documents": documents.list_meta()}
+
+
+@app.get("/documents/{filename}/substage-map", dependencies=admin_only)
+async def get_document_substage_map(filename: str):
+    """Разбивка документа по подэтапам: какие куски текста к каким подэтапам отнесены и
+    с какой уверенностью (косинус) — критерий попадания. Низкий score выдаёт ошибочные."""
+    data = indexing.document_substage_map(filename)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Чанки документа не найдены")
+    return data
+
+
 @app.post("/documents/{filename}/reindex", dependencies=admin_only)
 async def reindex_document(filename: str):
-    """Переанализ документа (без повторного docling): обновляет папки по чанкам."""
+    """Переанализ документа (без повторного docling): обновляет папки/этапы по чанкам
+    и синхронизирует запись в реестре метаданных."""
     result = indexing.reanalyze_document(filename)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
+    try:
+        doc = next((d for d in indexing.list_documents() if d.get("filename") == filename), {})
+        documents.update_assignment_by_filename(
+            filename, result.get("folders") or [], doc.get("stage_ids") or [])
+    except Exception:
+        pass
     return result
 
 
@@ -455,6 +556,18 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=413,
                             detail=f"Файл превышает лимит {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ")
 
+    # Дедупликация по содержимому (sha256): тот же файл не грузим и не индексируем заново.
+    try:
+        existing = documents.find_by_hash(documents.hash_bytes(content))
+    except Exception:
+        existing = None   # реестр недоступен — не блокируем загрузку
+    if existing:
+        return JSONResponse(status_code=200, content={
+            "duplicate": True, "filename": existing["filename"],
+            "uploaded_at": existing.get("uploaded_at"),
+            "message": f"Такой файл уже загружен ранее ({existing['filename']}) — повторная обработка не требуется",
+        })
+
     try:
         filepath = indexing.save_uploaded_file(file.filename, content)
     except ValueError as e:
@@ -462,6 +575,47 @@ async def upload_document(file: UploadFile = File(...)):
 
     job = indexing.enqueue_document(filepath)
     return JSONResponse(status_code=202, content=job)
+
+
+# ---------- Штатное расписание (первичный инструмент: люди и должности) ----------
+class StaffingImportRequest(BaseModel):
+    records: list = []
+
+
+@app.post("/staffing/preview", dependencies=admin_only)
+async def staffing_preview(file: UploadFile = File(...)):
+    """Разбор загруженной xlsx-штатки: ИИ определяет разметку столбцов, возвращаем
+    найденное сопоставление и извлечённые записи для подтверждения администратором."""
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"Файл превышает лимит {MAX_UPLOAD_BYTES // (1024 * 1024)} МБ")
+    try:
+        result = staffing.parse_file(content, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Не удалось разобрать таблицу: {e}")
+    result["count"] = len(result.get("records") or [])
+    return result
+
+
+@app.post("/staffing/import", dependencies=admin_only)
+async def staffing_import(req: StaffingImportRequest):
+    """Массовое создание из подтверждённых строк единой таблицы: строки с ФИО — профили
+    сотрудников (логины/пароли в ответе, один раз), строки без ФИО — профили-вакансии."""
+    return staffing.import_records(req.records or [])
+
+
+@app.post("/users/delete-non-admins", dependencies=owner_only)
+async def delete_non_admins():
+    """Удаляет ВСЕХ пользователей, кроме администраторов (владелец и админы остаются).
+    Необратимо — только для главного администратора. Заодно чистит строки рассылки."""
+    deleted = 0
+    for u in users.list_users():
+        if u.get("role") in users.ADMIN_ROLES:
+            continue
+        if users.delete_user(u["id"]):
+            deleted += 1
+    return {"deleted": deleted}
 
 
 @app.get("/documents/jobs/{job_id}", dependencies=admin_only)
@@ -488,6 +642,10 @@ async def remove_document(filename: str):
     existed = indexing.delete_document(filename)
     if not existed:
         raise HTTPException(status_code=404, detail="Документ не найден")
+    try:
+        documents.remove_by_filename(filename)
+    except Exception:
+        pass
     return {"filename": filename, "deleted": True}
 
 
@@ -527,7 +685,7 @@ def create_folder(req: FolderRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     # Новая папка -> обновляем векторы и переанализируем потенциально релевантные
-    # документы, чтобы они попали в неё.
+    # документы, чтобы они попали в неё (ТЗ §8).
     classify.sync_folder_vectors()
     _bg(indexing.reanalyze_for_folder, folder["slug"])
     return folder
@@ -543,7 +701,7 @@ def update_folder(folder_id: str, req: FolderRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     classify.sync_folder_vectors()
-    # Изменились критерии/название или папку включили — переанализируем документы.
+    # Изменились критерии/название/этапы или папку включили — переанализируем документы.
     fields = req.model_dump(exclude_none=True)
     if any(k in fields for k in ("name", "description", "criteria", "stage_ids", "enabled")):
         _bg(indexing.reanalyze_for_folder, folder["slug"])
@@ -562,7 +720,7 @@ def delete_folder(folder_id: str):
     return {"deleted": True}
 
 
-# ---------- Повторный анализ и уточнения по документам ----------
+# ---------- Повторный анализ и уточнения по документам (ТЗ §8, §16, §26) ----------
 class ClarifyRequest(BaseModel):
     clarification: str
 
@@ -585,11 +743,49 @@ def reanalyze_one(filename: str):
 
 @app.post("/documents/{filename}/clarify", dependencies=admin_only)
 async def clarify_document(filename: str, req: ClarifyRequest):
-    """Текстовое уточнение пользователя (актуальность/архив/область действия).
+    """Текстовое уточнение пользователя (актуальность/архив/область действия — ТЗ §17).
     Исходный документ не переписывается — уточнение хранится как доп. контекст."""
     if not indexing.set_clarification(filename, req.clarification):
         raise HTTPException(status_code=404, detail="Документ не найден")
     return {"filename": filename, "clarification": req.clarification}
+
+
+# ---------- Этапы обучения (структура, к которой привязываются папки) ----------
+class StageRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    substages: list | None = None
+    position: int | None = None
+
+
+@app.get("/knowledge/stages", dependencies=admin_only)
+async def get_stages():
+    return {"stages": stages.list_stages()}
+
+
+@app.post("/knowledge/stages", dependencies=admin_only)
+async def create_stage(req: StageRequest):
+    try:
+        return stages.create_stage(req.title, req.description or "", req.substages)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/knowledge/stages/{stage_id}", dependencies=admin_only)
+async def update_stage(stage_id: str, req: StageRequest):
+    if stages.get_stage(stage_id) is None:
+        raise HTTPException(status_code=404, detail="Этап не найден")
+    try:
+        return stages.update_stage(stage_id, **req.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/knowledge/stages/{stage_id}", dependencies=admin_only)
+async def delete_stage(stage_id: str):
+    if not stages.delete_stage(stage_id):
+        raise HTTPException(status_code=404, detail="Этап не найден")
+    return {"deleted": True}
 
 
 # ---------- Вопросы без ответа (эскалация человеку) ----------
@@ -616,7 +812,180 @@ async def resolve_question(qid: str, req: ResolveRequest, actor: dict = Depends(
     return entry
 
 
-# ---------- Пользователи и роли ----------
+# ---------- Конструктор плана адаптации ----------
+class PlanRequest(BaseModel):
+    title: str | None = None
+    role: str | None = None
+    description: str | None = None
+    start_date: str | None = None
+    timezone: str | None = None
+    stages: list = []
+
+
+@app.get("/catalog", dependencies=admin_only)
+async def get_catalog():
+    """Каталог этапов и шаблонов подэтапов — из него человек собирает план."""
+    return planner.load_catalog()
+
+
+@app.get("/plans", dependencies=admin_only)
+async def get_plans():
+    return {"plans": planner.list_plans()}
+
+
+@app.post("/plans", dependencies=admin_only)
+async def create_plan(req: PlanRequest):
+    plan = planner.normalize_plan(req.model_dump())
+    planner.save_plan(plan)
+    return plan
+
+
+@app.post("/plans/template", dependencies=admin_only)
+async def create_full_template(title: str | None = None):
+    """Создаёт полный универсальный шаблон плана из всего каталога (все этапы и подэтапы),
+    единый для всех профессий. Дальше редактируется как обычный план."""
+    plan = planner.build_full_template(title or "Универсальный план адаптации")
+    planner.save_plan(plan)
+    return plan
+
+
+@app.post("/chunks/assign-stages", dependencies=admin_only)
+def assign_chunks_to_stages():
+    """Материализация «папок этапов»: раскладывает все чанки по этапам каталога адаптации
+    (payload.plan_stages). Нужно после загрузки документов, чтобы генерация плана брала
+    чанки нужного этапа. Фоново — прогресс тянуть общей ручкой задач не нужно, операция
+    дешёвая (эмбеддинги этапов + косинус к готовым векторам)."""
+    _bg(indexing.assign_chunks_to_stages)
+    return {"status": "started"}
+
+
+@app.get("/plans/{plan_id}", dependencies=admin_only)
+async def get_plan(plan_id: str):
+    plan = planner.load_plan(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    return {"plan": plan, "schedule_preview": planner.resolve_schedule(plan)}
+
+
+@app.put("/plans/{plan_id}", dependencies=admin_only)
+async def update_plan(plan_id: str, req: PlanRequest):
+    existing = planner.load_plan(plan_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    payload = req.model_dump()
+    payload["created_at"] = existing.get("created_at")
+    plan = planner.normalize_plan(payload, plan_id=plan_id)
+    planner.save_plan(plan)
+    return plan
+
+
+@app.delete("/plans/{plan_id}", dependencies=admin_only)
+async def remove_plan(plan_id: str):
+    if not planner.delete_plan(plan_id):
+        raise HTTPException(status_code=404, detail="План не найден")
+    return {"plan_id": plan_id, "deleted": True}
+
+
+@app.post("/plans/{plan_id}/duplicate", dependencies=admin_only)
+async def duplicate_plan(plan_id: str, title: str | None = None):
+    """Копия плана под смежную должность — дальше редактируется как обычно."""
+    plan = planner.duplicate_plan(plan_id, title)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    return plan
+
+
+def _staffing_positions() -> list:
+    """Уникальные должности сотрудников из штатки — под каждую генерируется свой контент плана."""
+    seen = []
+    for u in users.list_users():
+        pos = (u.get("position") or "").strip()
+        if pos and pos not in seen:
+            seen.append(pos)
+    return seen
+
+
+@app.post("/plans/{plan_id}/generate", dependencies=admin_only)
+async def generate_plan(plan_id: str):
+    """
+    Запускает фоновую генерацию контента плана. План один; контент собирается под КАЖДУЮ
+    уникальную должность из штатки (плюс общее расписание). Прогресс — через GET /jobs/{job_id}.
+    """
+    plan = planner.load_plan(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    if not any(s.get("substages") for s in plan.get("stages") or []):
+        raise HTTPException(status_code=400, detail="В плане нет ни одного подэтапа")
+    return planner.start_generation(plan, positions=_staffing_positions())
+
+
+@app.get("/jobs/{job_id}", dependencies=admin_only)
+async def get_job(job_id: str):
+    job = planner.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return job
+
+
+@app.post("/jobs/{job_id}/cancel", dependencies=admin_only)
+async def cancel_generation(job_id: str):
+    """Отмена фоновой генерации: уже сгенерированные подэтапы сохраняются, дальше не идём."""
+    job = planner.cancel_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    return job
+
+
+@app.get("/plans/{plan_id}/schedule", dependencies=admin_only)
+async def get_schedule(plan_id: str, profession: str | None = None):
+    """Расписание плана. profession — показать вариант под конкретную должность (иначе общий)."""
+    schedule = planner.load_schedule(plan_id, profession or "")
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="Расписание ещё не сгенерировано")
+    return schedule
+
+
+@app.get("/plans/{plan_id}/professions", dependencies=admin_only)
+async def get_plan_professions(plan_id: str):
+    """Профессии, под которые уже сгенерированы отдельные расписания."""
+    return {"professions": planner.list_schedule_professions(plan_id)}
+
+
+@app.post("/plans/{plan_id}/messages/{message_id}/regenerate", dependencies=admin_only)
+def regenerate_message(plan_id: str, message_id: str, profession: str | None = None):
+    """Перегенерация одного подэтапа — без прогона всего плана. profession — какое расписание."""
+    plan = planner.load_plan(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    message = planner.regenerate_one(plan, message_id, profession or "")
+    if message is None:
+        raise HTTPException(status_code=404, detail="Подэтап не найден в плане")
+    return message
+
+
+EXPORT_FILES = {
+    "plan.md": ("text/markdown; charset=utf-8", "План в формате для LLM"),
+    "plan.json": ("application/json", "Канонический план"),
+    "schedule.md": ("text/markdown; charset=utf-8", "Расписание с готовыми ответами"),
+    "schedule.json": ("application/json", "Расписание для мессенджеров и приложения"),
+}
+
+
+@app.get("/plans/{plan_id}/export/{name}", dependencies=admin_only)
+async def export_plan(plan_id: str, name: str):
+    if name not in EXPORT_FILES:
+        raise HTTPException(status_code=400, detail=f"Доступны: {', '.join(EXPORT_FILES)}")
+    try:
+        path = planner.plan_dir(plan_id) / name
+    except ValueError:
+        raise HTTPException(status_code=404, detail="План не найден")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Файл ещё не сформирован")
+    media_type, _ = EXPORT_FILES[name]
+    return FileResponse(path, media_type=media_type, filename=f"{plan_id}_{name}")
+
+
+# ---------- Пользователи: профили, роли, назначение планов ----------
 class UserRequest(BaseModel):
     full_name: str
     username: str | None = None
@@ -624,6 +993,12 @@ class UserRequest(BaseModel):
     position: str | None = None
     department: str | None = None
     contact: str | None = None
+    mentor: str | None = None
+    manager: str | None = None
+    plan_id: str | None = None
+    start_date: str | None = None
+    status: str | None = None
+    notes: str | None = None
 
 
 class RoleRequest(BaseModel):
@@ -653,9 +1028,16 @@ def _target_user(user_id: str, actor: dict) -> dict:
 
 @app.get("/users", dependencies=admin_only)
 async def get_users():
+    plans = {p["plan_id"]: p for p in planner.list_plans()}
     result = []
     for user in users.list_users():
-        result.append({**user, "has_account": bool(user.get("username"))})
+        plan = plans.get(user.get("plan_id"))
+        result.append({
+            **user,
+            "plan_title": plan["title"] if plan else None,
+            "plan_generated": bool(plan and plan.get("generated")),
+            "has_account": bool(user.get("username")),
+        })
     return {"users": result}
 
 
@@ -683,7 +1065,7 @@ async def get_user(user_id: str):
 
 @app.put("/users/{user_id}")
 async def update_user(user_id: str, req: UserRequest, actor: dict = Depends(require_admin)):
-    """Правка профиля сотрудника."""
+    """Правка профиля и назначение плана адаптации с датой выхода."""
     _target_user(user_id, actor)
     user = users.update_profile(user_id, req.model_dump())
     return users.public_view(user)
@@ -769,6 +1151,56 @@ async def transfer_ownership(user_id: str, actor: dict = Depends(require_owner))
     return users.public_view(new_owner)
 
 
+@app.get("/users/{user_id}/schedule", dependencies=admin_only)
+async def get_user_schedule(user_id: str):
+    """
+    Персональное расписание: план-шаблон, пересчитанный на дату выхода этого
+    сотрудника, с подстановкой плейсхолдеров. Считается на лету — при правке
+    плана или даты выхода расписание всегда актуальное.
+    """
+    user = users.get_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    try:
+        return adaptation.build_employee_schedule(user)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+EMPLOYEE_EXPORTS = {"schedule.json", "schedule.md"}
+
+
+@app.get("/users/{user_id}/export/{name}", dependencies=admin_only)
+async def export_user_schedule(user_id: str, name: str):
+    if name not in EMPLOYEE_EXPORTS:
+        raise HTTPException(status_code=400, detail=f"Доступны: {', '.join(EMPLOYEE_EXPORTS)}")
+
+    employee = users.get_user(user_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    try:
+        schedule = adaptation.build_employee_schedule(employee)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if name == "schedule.json":
+        body = json.dumps(schedule, ensure_ascii=False, indent=2)
+        media_type = "application/json"
+    else:
+        body = planner.render_schedule_md(schedule)
+        media_type = "text/markdown; charset=utf-8"
+
+    # ФИО кириллицей в заголовок напрямую не положить (HTTP-заголовки — latin-1),
+    # поэтому ASCII-запаска плюс RFC 5987 filename* с процентным кодированием
+    pretty = f"{(employee.get('full_name') or 'employee').replace(' ', '_')}_{name}"
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition":
+                 f'attachment; filename="{user_id}_{name}"; '
+                 f"filename*=UTF-8''{quote(pretty)}"},
+    )
+
+
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

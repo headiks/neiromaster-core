@@ -188,6 +188,12 @@
         </div>
     </div>
 
+    <div class="chat-header" style="margin-top:28px;">
+        <h2 class="section-title"><i data-lucide="calendar-days"></i> Мой план адаптации</h2>
+        <button class="toggle-btn" id="plan-toggle" onclick="togglePlan()" style="display:none;">Показать весь план</button>
+    </div>
+    <div id="my-plan"><div class="empty-hint">Загрузка плана...</div></div>
+
     <div id="my-questions-block" style="margin-top:28px;display:none;">
         <h2 class="section-title"><i data-lucide="messages-square"></i> Мои вопросы специалисту</h2>
         <div id="my-questions"></div>
@@ -285,7 +291,75 @@
               });
         }
 
-        // ---------------- Мои вопросы специалисту (эскалации) ----------------
+        // ---------------- Мой план адаптации ----------------
+        let mySchedule = null;
+        let showAllPlan = false;
+        const UPCOMING_LIMIT = 5;
+
+        function whenLabel(msg) {
+            if (msg.schedule.send_at) return msg.schedule.send_at.replace('T', ' ');
+            const anchor = msg.schedule.anchor === 'before_start' ? 'до выхода' : 'от выхода';
+            const offset = msg.schedule.offset_days;
+            return `${offset >= 0 ? '+' : ''}${offset} дн. (${anchor}), ${msg.schedule.time}`;
+        }
+
+        function loadMyPlan() {
+            api('/api/my/schedule')
+                .then(res => res.json().then(data => ({ ok: res.ok, data })))
+                .then(({ ok, data }) => {
+                    const container = document.getElementById('my-plan');
+                    if (!ok) {
+                        container.innerHTML = `<div class="plan-note"><i data-lucide="info"></i> ${escapeHtml(data.detail)}.
+                            Обратитесь к своему администратору или наставнику.</div>`;
+                        refreshIcons();
+                        return;
+                    }
+                    mySchedule = data;
+                    document.getElementById('plan-toggle').style.display = 'inline-block';
+                    renderMyPlan();
+                })
+                .catch(() => {});
+        }
+
+        function togglePlan() {
+            showAllPlan = !showAllPlan;
+            document.getElementById('plan-toggle').textContent =
+                showAllPlan ? 'Показать только ближайшее' : 'Показать весь план';
+            renderMyPlan();
+        }
+
+        function renderMyPlan() {
+            const container = document.getElementById('my-plan');
+            const today = new Date().toISOString().slice(0, 10);
+            const all = mySchedule.messages || [];
+            const upcoming = all.filter(m => (m.schedule.send_at || '') >= today);
+            const shown = showAllPlan ? all : upcoming.slice(0, UPCOMING_LIMIT);
+
+            const header = `<div class="plan-note">
+                План «${escapeHtml(mySchedule.plan_title)}» · дата выхода ${escapeHtml(mySchedule.start_date)} ·
+                всего сообщений: ${all.length}${showAllPlan ? '' : ` · ближайших: ${upcoming.length}`}
+            </div>`;
+
+            if (!shown.length) {
+                container.innerHTML = header + `<div class="empty-hint">Ближайших сообщений нет — программа адаптации пройдена.</div>`;
+                return;
+            }
+
+            container.innerHTML = header + `
+                <table class="schedule">
+                    <thead><tr><th>Когда</th><th>Этап</th><th>Сообщение</th></tr></thead>
+                    <tbody>${shown.map(msg => `
+                        <tr>
+                            <td style="white-space:nowrap;">${escapeHtml(whenLabel(msg))}</td>
+                            <td>${escapeHtml(msg.stage.title)}
+                                <div class="msg-meta">${escapeHtml(msg.substage.title)}</div></td>
+                            <td><div class="msg-text">${escapeHtml(msg.content.text || 'Текст пока не подготовлен')}</div></td>
+                        </tr>
+                    `).join('')}</tbody>
+                </table>
+            `;
+        }
+
         function loadMyQuestions() {
             api('/api/my/questions').then(r => r.json()).then(d => {
                 const items = d.questions || [];
@@ -312,6 +386,7 @@
             }).catch(() => {});
         }
 
+        loadMyPlan();
         loadMyQuestions();
 
         // ----- Сессия хранится в localStorage, чтобы не сбрасываться при перезагрузке -----

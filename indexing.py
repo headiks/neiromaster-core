@@ -42,6 +42,7 @@ from docling_core.types.doc.document import DoclingDocument
 
 import classify
 import folders
+import documents
 from config import (
     DOCS_DIR, CONVERTED_DIR, CACHE_DIR, REGISTRY_PATH,
     SUPPORTED_EXT, MAX_UPLOAD_BYTES,
@@ -156,6 +157,8 @@ def file_hash(path: Path) -> str:
 PAYLOAD_INDEXES = {
     "folders": PayloadSchemaType.KEYWORD,        # массив slug'ов — MatchAny фильтрует по папкам
     "stage_ids": PayloadSchemaType.KEYWORD,      # массив id блоков знаний — приоритет по текущему этапу
+    "plan_stages": PayloadSchemaType.KEYWORD,    # id этапов каталога — «папки этапов» для генерации плана
+    "plan_substages": PayloadSchemaType.KEYWORD, # id подэтапов каталога — «папки подэтапов» (тоньше этапа)
     "meaningful": PayloadSchemaType.BOOL,        # содержательный чанк (мусор в распределение не идёт)
     "source": PayloadSchemaType.KEYWORD,
     "section": PayloadSchemaType.KEYWORD,
@@ -329,6 +332,9 @@ def index_document(filepath: Path) -> dict:
                     else {"folders": [], "stage_ids": []}
                 # Профессия — ПЕР-ЧАНК с учётом контекста всего документа (не одна метка на документ).
                 chunk_prof = classify.chunk_profession(base_text, summary, doc_profession) if meaningful else ""
+                # Этапы/подэтапы каталога — сразу при индексации: чанк готов для персональных
+                # планов без отдельной ручной раскладки. Мусор (meaningful=False) не тегируем.
+                plan_stages, plan_substages = _stage_tags(vec) if meaningful else ([], [])
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{filename}-{src_hash}-{seg_index}"))
                 points.append(PointStruct(
                     id=point_id,
@@ -340,6 +346,8 @@ def index_document(filepath: Path) -> dict:
                         "meaningful": meaningful,
                         "folders": chunk_cls["folders"],
                         "stage_ids": chunk_cls["stage_ids"],
+                        "plan_stages": plan_stages,
+                        "plan_substages": plan_substages,
                         "profession": chunk_prof,
                         "section": section,
                         "headings": headings,
@@ -369,6 +377,18 @@ def index_document(filepath: Path) -> dict:
             stage_ids=doc_cls["stage_ids"], profession=doc_profession,
             path=filename, markdown_path=md_path.name,
         )
+        # Единый реестр метаданных в PostgreSQL (дедуп по хэшу + экран «этапы↔документы»).
+        # Сбой реестра не должен ронять индексацию — документ уже в Qdrant и в registry.json.
+        try:
+            documents.record(
+                sha256=src_hash, filename=filename, summary=summary,
+                folders=doc_folders, stage_ids=doc_cls["stage_ids"],
+                size_bytes=filepath.stat().st_size, mime=filepath.suffix.lstrip(".").lower(),
+                uploaded_at=uploaded_at,
+            )
+        except Exception as e:
+            _log("DOCMETA", f"не удалось записать метаданные {filename} в БД: {e}")
+
         _log("DONE", f"{filename}: {len(points)} чанков за {elapsed:.2f} сек, папки: {doc_folders or '(общая база)'}")
         return {"filename": filename, "status": "indexed", "chunks": len(points),
                 "elapsed": elapsed, "folders": doc_folders, "similar": similar}
@@ -388,11 +408,14 @@ def _query_chunks(vector, query_filter, limit: int):
 
 
 def search_chunks(query_text: str, topic_slugs: Optional[list] = None, limit: int = 6,
+                  plan_stage: Optional[str] = None, plan_substage: Optional[str] = None,
                   position: str = "") -> list:
     """
-    Поиск чанков с сужением до тем (папок). Из двух похожих чанков приоритет получает тот,
-    чья профессия ближе к должности сотрудника (position) — механика приоритета по должности
-    из rag. Возвращает [{"text", "source", "folders", "section", "page", "score"}].
+    Поиск чанков с сужением до тем (папок) и до ЭТАПА каталога адаптации (plan_stage —
+    «папка этапа»: чанки, разложенные по этому этапу). Из двух похожих чанков приоритет
+    получает тот, чья профессия ближе к должности плана (position) — механика приоритета
+    по должности из rag. Если по этапу ничего нет (чанки ещё не разложены) — фолбэк без него.
+    Возвращает [{"text", "source", "folders", "section", "page", "score"}].
     """
     vector = get_embedding(query_text)
     # Только содержательные чанки (мусор — заголовки/номера страниц — в генерацию не идёт).
@@ -402,7 +425,20 @@ def search_chunks(query_text: str, topic_slugs: Optional[list] = None, limit: in
         base.append(FieldCondition(key="folders", match=MatchAny(any=list(topic_slugs))))
 
     fetch = max(limit * 3, limit) if position else limit
-    hits = _query_chunks(vector, Filter(must=base) if base else None, fetch)
+    # Сужение сверху вниз: подэтап -> этап -> без сужения. Первый непустой уровень выигрывает,
+    # чтобы генерация работала и до полной раскладки «папок подэтапов».
+    scope_filters = []
+    if plan_substage:
+        scope_filters.append(FieldCondition(key="plan_substages", match=MatchValue(value=plan_substage)))
+    if plan_stage:
+        scope_filters.append(FieldCondition(key="plan_stages", match=MatchValue(value=plan_stage)))
+    hits = []
+    for scope in scope_filters:
+        hits = _query_chunks(vector, Filter(must=base + [scope]), fetch)
+        if hits:
+            break
+    if not hits:
+        hits = _query_chunks(vector, Filter(must=base) if base else None, fetch)
     # Совсем пусто (старые чанки без meaningful) — ищем без базового фильтра.
     if not hits:
         hits = _query_chunks(vector, None, fetch)
@@ -424,6 +460,118 @@ def search_chunks(query_text: str, topic_slugs: Optional[list] = None, limit: in
         "page": h.payload.get("page"),
         "score": h.score,
     } for h in hits]
+
+
+# ---------- Материализация «папок этапов»: раскладка чанков по этапам каталога ----------
+PLAN_STAGE_MATCH = 0.45   # нижняя граница ПОКАЗА кандидата в обосновании (не привязки)
+# bge-m3 на русском даёт высокий «пол» косинуса (0.45–0.55 у любых двух текстов),
+# поэтому по абсолютному порогу документ цепляется к десяткам подэтапов. Привязку делаем
+# ОТНОСИТЕЛЬНОЙ: держим только подэтапы, близкие к лучшему для этого чанка, и не ниже пола.
+PLAN_SUBSTAGE_FLOOR = 0.55   # ниже — точно шум (канцелярит/метаданные), не привязываем
+PLAN_SUBSTAGE_MARGIN = 0.04  # отставание от лучшего для чанка, дальше — обрыв
+PLAN_SUBSTAGE_TOPK = 2       # максимум подэтапов на чанк
+
+
+def _select_substages(scored):
+    """Из [(stage_id, sub_id, score)] оставляет только уверенные привязки чанка:
+    топ по score, в пределах MARGIN от лучшего и не ниже FLOOR, максимум TOPK.
+    Так один чанк ложится в 0–3 подэтапа, а не в половину каталога."""
+    scored = sorted(scored, key=lambda x: x[2], reverse=True)
+    if not scored or scored[0][2] < PLAN_SUBSTAGE_FLOOR:
+        return []
+    best = scored[0][2]
+    out = []
+    for stid, sub_id, sc in scored:
+        if sc < PLAN_SUBSTAGE_FLOOR or sc < best - PLAN_SUBSTAGE_MARGIN:
+            break
+        out.append((stid, sub_id, sc))
+        if len(out) >= PLAN_SUBSTAGE_TOPK:
+            break
+    return out
+
+
+def _cos(a, b) -> float:
+    if not a or not b:
+        return 0.0
+    s = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return s / (na * nb) if na and nb else 0.0
+
+
+_CATALOG_STAGE_VECS = None   # ((stage_id, vec)...), ((stage_id, sub_id, vec)...)
+
+
+def _catalog_stage_vectors():
+    """Эмбеддинги «запросов» этапов и подэтапов каталога. Кэш на время процесса.
+    ponytail: сброс кэша — рестарт или reset_stage_vectors(); каталог меняется редко."""
+    global _CATALOG_STAGE_VECS
+    if _CATALOG_STAGE_VECS is None:
+        import planner
+        cat = planner.load_catalog()
+        sv, subv = [], []
+        for st in cat.get("stages") or []:
+            sv.append((st["id"], get_embedding(planner.catalog_stage_query(st))))
+            for sub in st.get("substage_templates") or []:
+                subv.append((st["id"], sub["id"], get_embedding(planner.catalog_substage_query(st, sub))))
+        _CATALOG_STAGE_VECS = (sv, subv)
+    return _CATALOG_STAGE_VECS
+
+
+def reset_stage_vectors():
+    global _CATALOG_STAGE_VECS
+    _CATALOG_STAGE_VECS = None
+
+
+def _stage_tags(vec):
+    """(plan_stages[], plan_substages[]) для вектора чанка. Привязка ОТНОСИТЕЛЬНАЯ
+    (см. _select_substages): 0–3 самых близких подэтапа, а не всё подряд по порогу.
+    Этапы выводятся из принятых подэтапов."""
+    _, subv = _catalog_stage_vectors()
+    scored = [(stid, sub_id, _cos(vec, sv)) for stid, sub_id, sv in subv]
+    accepted = _select_substages(scored)
+    subs = sorted({s for _, s, _ in accepted})
+    stages = sorted({st for st, _, _ in accepted})
+    return stages, subs
+
+
+def assign_chunks_to_stages() -> dict:
+    """Раскладывает содержательные чанки по этапам И подэтапам каталога адаптации: каждому
+    чанку проставляет payload.plan_stages и payload.plan_substages — id, смыслу которых он
+    соответствует (по близости к «запросу этапа/подэтапа»). Мульти-лейбл: один чанк (и один
+    документ) может относиться к нескольким этапам и подэтапам. Служебный мусор (meaningful=False)
+    пропускается — метки пустые. Дёшево: эмбеддинги этапов/подэтапов + косинус к готовым векторам."""
+    reset_stage_vectors()                       # каталог мог измениться — пересчитать векторы
+    stage_vecs, sub_vecs = _catalog_stage_vectors()
+    for field in ("plan_stages", "plan_substages"):
+        try:
+            client.create_payload_index(COLLECTION_NAME, field_name=field,
+                                         field_schema=PayloadSchemaType.KEYWORD)
+        except Exception:
+            pass
+
+    offset = None
+    touched = 0
+    while True:
+        batch, offset = client.scroll(
+            collection_name=COLLECTION_NAME, limit=256,
+            with_payload=True, with_vectors=True, offset=offset,
+        )
+        for p in batch:
+            if (p.payload or {}).get("meaningful") is False:   # мусор не распределяем
+                client.set_payload(collection_name=COLLECTION_NAME,
+                                   payload={"plan_stages": [], "plan_substages": []}, points=[p.id])
+                touched += 1
+                continue
+            plan_stages, plan_substages = _stage_tags(p.vector)
+            client.set_payload(collection_name=COLLECTION_NAME,
+                               payload={"plan_stages": plan_stages, "plan_substages": plan_substages},
+                               points=[p.id])
+            touched += 1
+        if offset is None:
+            break
+    _log("STAGES", f"чанков разложено: {touched} (этапов {len(stage_vecs)}, подэтапов {len(sub_vecs)})")
+    return {"chunks": touched, "stages": len(stage_vecs), "substages": len(sub_vecs)}
 
 
 def _vector_stats(vector) -> dict:
@@ -474,6 +622,8 @@ def get_document_chunks(filename: str) -> Optional[dict]:
             "meaningful": payload.get("meaningful", True),
             "folders": payload.get("folders") or [],
             "stage_ids": payload.get("stage_ids") or [],
+            "plan_stages": payload.get("plan_stages") or [],
+            "plan_substages": payload.get("plan_substages") or [],
             "profession": payload.get("profession") or "",
             "length": payload.get("length"),
             "text": payload.get("text", ""),          # то, что реально ушло в эмбеддинг
@@ -482,6 +632,63 @@ def get_document_chunks(filename: str) -> Optional[dict]:
         })
     chunks.sort(key=lambda c: (c["chunk_index"] is None, c["chunk_index"] or 0))
     return {"filename": filename, "chunks": chunks, "count": len(chunks)}
+
+
+def document_substage_map(filename: str) -> Optional[dict]:
+    """Разбивка документа по подэтапам с ОБОСНОВАНИЕМ: для каждого содержательного чанка —
+    к каким подэтапам он отнесён и НАСКОЛЬКО близок (косинус к «запросу подэтапа» каталога).
+    Score — и есть критерий: чем выше, тем увереннее; низкий у пункта → вероятно, попал ошибочно.
+    Возвращает {filename, chunks:[{chunk_index, section, page, text, meaningful,
+    matches:[{substage_id, stage_id, stage_title, title, brief, score}]}]}."""
+    import planner
+    cat = planner.load_catalog()
+    meta = {}   # sub_id -> подписи для UI
+    for st in cat.get("stages") or []:
+        for sub in st.get("substage_templates") or []:
+            meta[sub["id"]] = {"stage_id": st["id"], "stage_title": st.get("title", ""),
+                               "title": sub.get("title", ""), "brief": sub.get("brief", "")}
+    _, sub_vecs = _catalog_stage_vectors()   # [(stage_id, sub_id, vec)]
+
+    points = []
+    offset = None
+    while True:
+        batch, offset = client.scroll(
+            collection_name=COLLECTION_NAME,
+            scroll_filter=Filter(must=[FieldCondition(key="source", match=MatchValue(value=filename))]),
+            limit=256, with_payload=True, with_vectors=True, offset=offset,
+        )
+        points.extend(batch)
+        if offset is None:
+            break
+    if not points:
+        return None
+
+    chunks = []
+    for p in points:
+        pl = p.payload or {}
+        meaningful = pl.get("meaningful", True)
+        matches = []
+        if meaningful:
+            scored = [(stid, sub_id, _cos(p.vector, sv)) for stid, sub_id, sv in sub_vecs]
+            accepted = {(st, sub) for st, sub, _ in _select_substages(scored)}   # реальные привязки
+            for stid, sub_id, sc in scored:
+                if sc >= PLAN_STAGE_MATCH:   # показываем и кандидатов — для ручной оценки
+                    m = meta.get(sub_id, {})
+                    matches.append({"substage_id": sub_id, "stage_id": stid,
+                                    "stage_title": m.get("stage_title", ""), "title": m.get("title", ""),
+                                    "brief": m.get("brief", ""), "score": round(sc, 3),
+                                    "accepted": (stid, sub_id) in accepted})
+            matches.sort(key=lambda x: (x["accepted"], x["score"]), reverse=True)
+        chunks.append({
+            "chunk_index": pl.get("chunk_index"),
+            "section": pl.get("section") or "",
+            "page": pl.get("page"),
+            "meaningful": meaningful,
+            "text": pl.get("raw_text") or pl.get("text") or "",
+            "matches": matches,
+        })
+    chunks.sort(key=lambda c: (c["chunk_index"] is None, c["chunk_index"] or 0))
+    return {"filename": filename, "threshold": PLAN_STAGE_MATCH, "chunks": chunks, "count": len(chunks)}
 
 
 def get_folder_chunks(slug: str, limit: int = 1000) -> dict:
@@ -560,6 +767,12 @@ def delete_document(filename: str, remove_file: bool = True) -> bool:
         reg = _load_registry()
         existed = reg.pop(filename, None) is not None
         _save_registry(reg)
+
+    # Синхронно убираем строку из реестра метаданных, чтобы экран не показывал удалённое.
+    try:
+        documents.remove_by_filename(filename)
+    except Exception as e:
+        _log("DELETE", f"метаданные {filename} из БД: {e}")
     return existed
 
 
@@ -773,12 +986,15 @@ def reanalyze_document(filename: str) -> dict:
                     # на каждый чанк (это делало переанализ 78-чанкового документа многочасовым).
                     # Переанализ реагирует на изменения папок/каталога — это векторные операции.
                     chunk_prof = (p.payload or {}).get("profession") or ""
+                    plan_stages, plan_substages = _stage_tags(p.vector)
                 else:
                     cc = {"folders": [], "stage_ids": []}
                     chunk_prof = ""
+                    plan_stages, plan_substages = [], []
                 client.set_payload(collection_name=COLLECTION_NAME,
                                    payload={"meaningful": meaningful, "folders": cc["folders"],
-                                            "stage_ids": cc["stage_ids"], "profession": chunk_prof},
+                                            "stage_ids": cc["stage_ids"], "profession": chunk_prof,
+                                            "plan_stages": plan_stages, "plan_substages": plan_substages},
                                    points=[p.id])
                 touched += 1
             if offset is None:

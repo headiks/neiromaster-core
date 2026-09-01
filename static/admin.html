@@ -3,258 +3,1813 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>НейроМастер — админка</title>
+    <title>Админка НейроМастер</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; max-width: 1000px; margin: 24px auto; padding: 16px; background: #f5f7fa; color: #1e293b; }
-        .page-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3b82f6; padding-bottom: 10px; }
-        h1 { margin: 0; font-size: 24px; }
-        h2 { font-size: 19px; margin: 0 0 12px; }
-        .head-actions { display: flex; gap: 8px; align-items: center; font-size: 14px; }
-        a.link, button.btn { border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px 13px; background: #fff; cursor: pointer; font-size: 14px; font-family: inherit; text-decoration: none; color: #475569; }
-        button.btn:hover, a.link:hover { background: #f1f5f9; }
-        button.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
-        button.primary:hover { background: #2563eb; }
-        button.danger { color: #b91c1c; border-color: #fecaca; }
-        nav.tabs { display: flex; gap: 6px; margin: 20px 0; flex-wrap: wrap; }
-        nav.tabs button { border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
-        nav.tabs button.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
-        section { display: none; }
-        section.active { display: block; }
-        .card { background: #fff; border-radius: 10px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-        th { background: #f1f5f9; font-size: 13px; }
-        input, textarea, select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; font-size: 14px; margin-bottom: 10px; }
-        label { display: block; font-size: 13px; color: #475569; margin-bottom: 3px; }
-        .row { display: flex; gap: 12px; flex-wrap: wrap; }
-        .row > div { flex: 1; min-width: 180px; }
-        .status { font-size: 12px; padding: 2px 8px; border-radius: 20px; background: #e2e8f0; }
-        .status.indexed { background: #bbf7d0; color: #14532d; }
-        .status.error { background: #fecaca; color: #991b1b; }
-        .status.processing, .status.reanalyzing { background: #fde68a; color: #78350f; }
-        .muted { color: #94a3b8; font-size: 13px; }
-        .msg { padding: 10px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
-        .msg.err { background: #fee2e2; color: #b91c1c; }
-        .msg.ok { background: #dcfce7; color: #166534; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1060px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #f5f7fa;
+        }
+        .page-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 10px;
+        }
+        h1 { color: #1e293b; margin: 0; font-size: 26px; }
+        .head-actions { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #475569; }
+        h2.section-title {
+            color: #1e293b;
+            font-size: 20px;
+            margin-top: 32px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .primary-btn {
+            padding: 12px 28px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .primary-btn:hover { background: #2563eb; }
+        .primary-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+        .ghost-btn {
+            background: none;
+            border: 1px solid #cbd5e1;
+            color: #475569;
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .ghost-btn:hover { background: #f1f5f9; }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 16px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .error { color: #dc2626; background: #fee2e2; padding: 12px; border-radius: 8px; }
+
+        /* ---- Вкладки ---- */
+        .tabs { display: flex; gap: 6px; border-bottom: 2px solid #e2e8f0; margin-top: 20px; }
+        .tab {
+            padding: 12px 22px;
+            border: none;
+            background: none;
+            font-size: 16px;
+            color: #64748b;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+        .tab:hover { color: #1e293b; }
+        .tab.active { color: #1d4ed8; border-bottom-color: #3b82f6; font-weight: 600; }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+        .q-badge { background:#dc2626; color:#fff; border-radius:10px; padding:0 7px; font-size:12px; font-weight:600; }
+        .badge { display:inline-block; padding:2px 8px; border-radius:6px; font-size:12px; font-weight:600; background:#e2e8f0; color:#334155; }
+        .badge.escalate { background:#fecaca; color:#991b1b; }
+        .answer { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px; margin-top:6px; white-space:pre-wrap; }
+        .context-note { font-size:13px; color:#64748b; margin-top:4px; }
+
+        /* ---- Документы ---- */
+        .dropzone {
+            border: 2px dashed #94a3b8;
+            border-radius: 12px;
+            padding: 28px;
+            text-align: center;
+            background: white;
+            cursor: pointer;
+            transition: 0.15s;
+            color: #475569;
+        }
+        .dropzone.dragover { border-color: #3b82f6; background: #eff6ff; color: #1e40af; }
+        .dropzone small { display: block; margin-top: 6px; color: #94a3b8; }
+        #file-input, #staffing-file { display: none; }
+        .doc-list { margin-top: 16px; }
+        .doc-item {
+            background: white;
+            border-radius: 10px;
+            padding: 14px 18px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+        .doc-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .doc-name {
+            font-weight: 600;
+            color: #0f172a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .doc-meta { font-size: 13px; color: #64748b; }
+        .doc-status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+        .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; white-space: nowrap; }
+        .status-badge.uploaded { background: #e2e8f0; color: #475569; }
+        .status-badge.processing { background: #fde68a; color: #78350f; }
+        .status-badge.reanalyzing { background: #fde68a; color: #78350f; }
+        .status-badge.indexed { background: #bbf7d0; color: #14532d; }
+        .status-badge.error { background: #fecaca; color: #991b1b; }
+        .status-badge.planned { background: #dbeafe; color: #1e40af; }
+        .status-badge.active { background: #bbf7d0; color: #14532d; }
+        .status-badge.done { background: #e2e8f0; color: #475569; }
+        .status-badge.paused { background: #fde68a; color: #78350f; }
+        .folder-tag { background: #ede9fe; color: #5b21b6; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
+        .del-btn {
+            background: none;
+            border: 1px solid #fca5a5;
+            color: #dc2626;
+            border-radius: 6px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .del-btn:hover { background: #fee2e2; }
+        .empty-hint { color: #94a3b8; font-size: 14px; padding: 10px 0; }
+        .upload-progress { margin-top: 12px; font-size: 14px; color: #1e40af; }
+        .folder-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            gap: 10px;
+        }
+        .folder-card {
+            background: white;
+            border-radius: 10px;
+            padding: 12px 14px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+            border-left: 4px solid #8b5cf6;
+        }
+        .folder-card .name { font-weight: 600; color: #0f172a; font-size: 14px; display:flex; align-items:center; gap:6px; }
+        .folder-card .desc { color: #64748b; font-size: 12px; margin-top: 4px; }
+        .folder-card .count { color: #7c3aed; font-size: 12px; margin-top: 6px; }
+        .folder-card.disabled { opacity: .55; }
+        .folder-card .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+        .folder-card .chip { font-size:11px; background:#eef2ff; color:#3730a3; border-radius:6px; padding:1px 8px; }
+        .folder-card .row-actions { display:flex; gap:6px; margin-top:10px; }
+        /* Этапы ↔ документы (встроенная доска, дизайн сайта) */
+        .stage-board { margin-top:14px; display:flex; flex-direction:column; gap:14px; }
+        .stg { border:1px solid #e2e8f0; border-radius:12px; overflow:hidden; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
+        .stg-head { display:flex; align-items:center; gap:12px; padding:12px 16px; background:#f8fafc; border-bottom:1px solid #e2e8f0; }
+        .stg-n { width:26px; height:26px; flex:none; border-radius:7px; background:#eef2ff; color:#3730a3; display:grid; place-items:center; font-weight:700; font-size:13px; }
+        .stg-tt { font-weight:700; font-size:14px; color:#0f172a; }
+        .stg-dd { color:#64748b; font-size:12px; }
+        .stg-count { margin-left:auto; font-size:12px; font-weight:700; color:#7c3aed; background:#f3e8ff; padding:2px 8px; border-radius:6px; white-space:nowrap; }
+        .sub-r { display:grid; grid-template-columns:220px 1fr; gap:14px; padding:12px 16px; border-top:1px solid #eef2f7; }
+        .sub-r:first-child { border-top:0; }
+        .sub-t { font-weight:600; font-size:13px; color:#334155; }
+        .sub-c { color:#94a3b8; font-size:11px; margin-top:3px; }
+        .sub-docs { display:flex; flex-wrap:wrap; gap:8px; }
+        .bdoc { display:flex; gap:8px; align-items:flex-start; background:#f8fafc; border:1px solid #e2e8f0; border-radius:9px; padding:7px 10px; min-width:190px; max-width:260px; }
+        .bdoc .ext { width:26px; height:26px; flex:none; border-radius:6px; display:grid; place-items:center; color:#fff; font-size:9px; font-weight:700; }
+        .bdoc .ext.pdf{background:#d1493f}.bdoc .ext.docx{background:#2f5fe0}.bdoc .ext.xls{background:#1f8a54}.bdoc .ext.ppt{background:#d1712a}.bdoc .ext.gen{background:#64748b}
+        .bdoc .nm { font-weight:600; font-size:12px; color:#0f172a; line-height:1.25; word-break:break-word; }
+        .bdoc .sc { font-size:11px; color:#64748b; margin-top:3px; }
+        .stg.unassigned { border-color:#e6d3a3; }
+        .stg.unassigned .stg-head { background:#fef9ec; }
+        .stg.unassigned .stg-n { background:transparent; color:#9a6a10; }
+        .bempty { color:#94a3b8; font-size:12px; font-style:italic; align-self:center; }
+        .bdoc { cursor:pointer; transition:border-color .15s; }
+        .bdoc:hover { border-color:#7c3aed; }
+        /* Модалка «куски по подэтапам» */
+        .smap-chunk { border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin-bottom:10px; background:#fff; }
+        .smap-chunk.smap-junk { opacity:.6; }
+        .smap-sec { font-size:11px; color:#94a3b8; margin-bottom:6px; }
+        .smap-chunk .txt { font-size:13px; color:#334155; line-height:1.45; white-space:pre-wrap; }
+        .smap-subs { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+        .smap-chip { font-size:12px; border-radius:6px; padding:3px 9px; border:1px solid transparent; }
+        .smap-chip.hi { background:#dcfce7; color:#14532d; border-color:#86efac; }
+        .smap-chip.mid { background:#fef9c3; color:#713f12; border-color:#fde68a; }
+        .smap-chip.lo { background:#fee2e2; color:#991b1b; border-color:#fecaca; }
+        .smap-chip small { opacity:.75; font-weight:700; }
+        .smap-none { font-size:12px; color:#94a3b8; font-style:italic; margin-top:6px; }
+        .section-head-row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:32px; }
+        .section-head-row .section-title { margin:0; }
+        .chk-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
+        .chk-grid label { display:flex; align-items:center; gap:7px; font-size:13px; color:#334155; }
+        .crit-row, .sub-row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+        .crit-row textarea { flex:1; min-height:38px; }
+        .sub-row input { flex:1; }
+        /* ---- Формы ---- */
+        .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px 0; }
+        .field { display: flex; flex-direction: column; gap: 4px; }
+        .field label { font-size: 12px; color: #64748b; }
+        input[type=text], input[type=date], input[type=time], input[type=number],
+        input[type=password], select, textarea {
+            padding: 8px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            background: white;
+        }
+        textarea { resize: vertical; min-height: 64px; width: 100%; box-sizing: border-box; }
+        .plan-meta { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+        .employee-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .employee-form .field input, .employee-form .field select { width: 100%; box-sizing: border-box; }
+
+        /* ---- Конструктор ---- */
+        .stage-card {
+            background: white;
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin: 14px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border-left: 5px solid #3b82f6;
+        }
+        .stage-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+        .stage-title-input { font-size: 16px; font-weight: 600; width: 100%; }
+        .stage-controls { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+        .stage-hint { color: #64748b; font-size: 13px; margin-top: 8px; }
+        .icon-btn {
+            background: none;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            padding: 4px 9px;
+            cursor: pointer;
+            color: #475569;
+            font-size: 13px;
+        }
+        .icon-btn:hover { background: #f1f5f9; }
+        .icon-btn.danger { border-color: #fca5a5; color: #dc2626; }
+        .icon-btn.danger:hover { background: #fee2e2; }
+        .sub-item {
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin: 10px 0;
+            background: #f8fafc;
+        }
+        .sub-head { display: flex; gap: 10px; align-items: center; }
+        .sub-head input[type=text] { flex: 1; }
+        .sub-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr auto;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: end;
+        }
+        .sub-when { font-size: 12px; color: #7c3aed; margin-top: 6px; }
+        .add-row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+        .muted { color: #64748b; }
+        .err { color: #b42318; }
+        .mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+        .tst { width: 100%; border-collapse: collapse; }
+        .tst th, .tst td { border: 1px solid #e2e8f0; padding: 6px 8px; text-align: left; }
+        .tst th { background: #f1f5f9; }
+        .combo-panel { position: fixed; z-index: 1200; background: #fff; border: 1px solid #cbd5e1;
+            border-radius: 8px; box-shadow: 0 8px 24px rgba(15,23,42,0.15); display: none; }
+        .combo-panel.open { display: block; }
+        .combo-search { width: 100%; box-sizing: border-box; border: none; border-bottom: 1px solid #e2e8f0;
+            border-radius: 8px 8px 0 0; padding: 8px 10px; font-size: 14px; outline: none; }
+        .combo-list { list-style: none; margin: 0; padding: 4px; max-height: 220px; overflow-y: auto; }
+        .combo-list li { padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: 14px; color: #334155; }
+        .combo-list li:hover { background: #eff6ff; }
+        .combo-list li.empty { color: #94a3b8; cursor: default; }
+        .progress-wrap { margin: 16px 0; }
+        .progress-bar { height: 10px; background: #e2e8f0; border-radius: 6px; overflow: hidden; }
+        .progress-bar > div { height: 100%; background: #3b82f6; width: 0; transition: width 0.3s; }
+        .progress-label { font-size: 13px; color: #475569; margin-top: 6px; }
+
+        table.schedule {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            font-size: 14px;
+        }
+        table.schedule th, table.schedule td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: top;
+        }
+        table.schedule th { background: #f1f5f9; color: #334155; font-size: 13px; }
+        .msg-text { white-space: pre-wrap; color: #1e293b; }
+        .msg-meta { font-size: 12px; color: #94a3b8; margin-top: 6px; }
+        .msg-error { color: #dc2626; font-size: 13px; }
+        .export-links { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0; }
+        .export-links a {
+            text-decoration: none;
+            background: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+            border-radius: 8px;
+            padding: 8px 14px;
+            font-size: 14px;
+        }
+        .export-links a:hover { background: #d1fae5; }
+        .warn {
+            background: #fffbeb;
+            border-left: 4px solid #f59e0b;
+            color: #92400e;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin: 12px 0;
+        }
+        dialog {
+            border: none;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 8px 30px rgba(15,23,42,0.2);
+            width: 320px;
+        }
+        dialog::backdrop { background: rgba(15,23,42,0.35); }
+        dialog label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
+        dialog input { width: 100%; box-sizing: border-box; margin-bottom: 14px; }
     </style>
+    <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+<body class="admin-page">
     <div class="page-head">
-        <h1>НейроМастер · админка</h1>
+        <h1><svg class="nm-mark" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18"/><circle cx="8" cy="9" r="1.5"/><circle cx="16" cy="9" r="1.5"/><circle cx="12" cy="16" r="1.5"/><path d="M9.7 9H14.3M8.84 10.48 11.16 14.52M15.16 10.48 12.84 14.52"/></svg> Админка</h1>
         <div class="head-actions">
-            <span id="whoami" class="muted"></span>
-            <a class="link" href="/">Кабинет</a>
-            <button class="btn" onclick="logout()">Выйти</button>
+            <span id="whoami"></span>
+            <a class="ghost-btn" href="/" style="text-decoration:none;"><i data-lucide="user"></i> Страница сотрудника</a>
+            <button class="ghost-btn" onclick="openPasswordDialog()"><i data-lucide="key-round"></i> Сменить пароль</button>
+            <button class="ghost-btn" onclick="logout()"><i data-lucide="log-out"></i> Выйти</button>
         </div>
     </div>
 
-    <nav class="tabs">
-        <button data-tab="docs" class="active" onclick="showTab('docs')">Документы</button>
-        <button data-tab="folders" onclick="showTab('folders')">Смысловые папки</button>
-        <button data-tab="users" onclick="showTab('users')">Пользователи</button>
-        <button data-tab="questions" onclick="showTab('questions')">Вопросы <span id="q-count"></span></button>
-    </nav>
-    <div id="msg"></div>
+    <div class="tabs">
+        <button class="tab active" data-tab="staffing"><i data-lucide="table"></i> Штатное расписание</button>
+        <button class="tab" data-tab="builder"><i data-lucide="calendar-cog"></i> Планы</button>
+        <button class="tab" data-tab="docs"><i data-lucide="database"></i> Папки</button>
+        <button class="tab" data-tab="questions"><i data-lucide="help-circle"></i> Вопросы <span id="questions-badge" class="q-badge" style="display:none;"></span></button>
+        <button class="tab" data-tab="employees"><i data-lucide="users"></i> Аккаунты</button>
+    </div>
 
-    <!-- ============ Документы ============ -->
-    <section id="docs" class="active">
-        <div class="card">
-            <h2>Загрузить регламент</h2>
-            <input type="file" id="doc-file" accept=".pdf,.docx,.pptx,.html,.htm,.md,.txt">
-            <button class="primary btn" onclick="uploadDoc()">Загрузить и проиндексировать</button>
-            <button class="btn" onclick="reanalyzeAll()">Переанализировать всю базу</button>
+    <!-- ==================== БАЗА ЗНАНИЙ ==================== -->
+    <div class="tab-pane active" id="pane-staffing">
+        <h2><i data-lucide="table"></i> Штатное расписание</h2>
+        <p class="muted" style="color:#64748b;font-size:14px;">
+            Первичный инструмент: загрузите штатку (xlsx, xls, csv) — ИИ сам определит структуру.
+            Если в файле есть ФИО — создаются профили сотрудников (логин по ФИО, временный пароль).
+            Если это расписание должностей без людей — создаются профили-вакансии (по должностям и
+            подразделениям, заполните ФИО позже). Должности попадут в список при заполнении карточек.
+        </p>
+        <div class="dropzone" id="staffing-dropzone">
+            <div><i data-lucide="file-spreadsheet" style="width:28px;height:28px;display:block;margin:0 auto 8px;color:var(--color-accent);"></i> Перетащите штатку (xlsx или csv) сюда или нажмите, чтобы выбрать файл</div>
+            <small>Форматы .xlsx, .xls, .csv · ИИ сам определит структуру таблицы и найдёт нужные данные</small>
+            <input type="file" id="staffing-file" accept=".xlsx,.xls,.csv,.tsv">
         </div>
-        <div class="card">
-            <h2>Документы базы знаний</h2>
-            <table><thead><tr><th>Файл</th><th>Статус</th><th>Папки</th><th>Чанков</th><th></th></tr></thead>
-                <tbody id="docs-body"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody>
-            </table>
-        </div>
-    </section>
+        <div id="staffing-status" class="muted" style="margin-top:10px;color:#64748b;font-size:14px;"></div>
+        <div id="staffing-preview"></div>
+        <div id="staffing-result"></div>
+    </div>
 
-    <!-- ============ Папки ============ -->
-    <section id="folders">
-        <div class="card">
-            <h2>Новая смысловая папка</h2>
-            <div class="row">
-                <div><label>Название</label><input id="f-name"></div>
-                <div><label>Критерии отнесения (через запятую)</label><input id="f-criteria" placeholder="охрана труда, спецодежда"></div>
+    <div class="tab-pane" id="pane-docs">
+        <h2 class="section-title"><i data-lucide="upload-cloud"></i> Загрузка регламентов</h2>
+        <div class="dropzone" id="dropzone">
+            <div><i data-lucide="upload" style="width:28px;height:28px;display:block;margin:0 auto 8px;color:var(--color-accent);"></i> Перетащите PDF или DOCX сюда, или нажмите, чтобы выбрать файл</div>
+            <small>PDF, DOCX, DOC, PPTX, HTML, MD, TXT · до 50 МБ · папку по содержанию выберет ассистент</small>
+            <input type="file" id="file-input" multiple accept=".pdf,.docx,.doc,.pptx,.html,.htm,.md,.txt" />
+        </div>
+        <div class="upload-progress" id="upload-progress"></div>
+
+        <div class="section-head-row">
+            <h2 class="section-title"><i data-lucide="folders"></i> Смысловые папки</h2>
+            <button class="ghost-btn" onclick="loadStageBoard()"><i data-lucide="refresh-cw"></i> Обновить</button>
+        </div>
+        <div class="stage-hint">Этапы и подэтапы адаптации и закреплённые за ними документы (привязка по смыслу). Данные из реестра метаданных.</div>
+        <div class="stage-board" id="stage-board"><div class="empty-hint">Загрузка структуры...</div></div>
+
+        <div class="section-head-row" style="margin-top:34px;">
+            <h2 class="section-title"><i data-lucide="file-text"></i> Документы</h2>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <a class="ghost-btn" href="/documents-table"><i data-lucide="table"></i> Реестр (таблица)</a>
+                <button class="ghost-btn" onclick="assignChunksToStages()"><i data-lucide="layers"></i> Разложить чанки по этапам</button>
+                <button class="ghost-btn" onclick="reanalyzeAll()"><i data-lucide="refresh-cw"></i> Переанализировать всё</button>
             </div>
-            <label>Описание</label><textarea id="f-desc" rows="2"></textarea>
-            <button class="primary btn" onclick="createFolder()">Создать папку</button>
         </div>
-        <div class="card">
-            <h2>Папки</h2>
-            <table><thead><tr><th>Название</th><th>Критерии</th><th>Документов</th><th>Вкл</th><th></th></tr></thead>
-                <tbody id="folders-body"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody>
-            </table>
-        </div>
-    </section>
+        <div class="stage-hint">Ассистент сам относит документы к папкам по смыслу. Все документы попадают в общую базу «Все документы» независимо от папок.</div>
+        <div class="doc-list" id="doc-list"><div class="empty-hint">Загрузка списка документов...</div></div>
+    </div>
 
-    <!-- ============ Пользователи ============ -->
-    <section id="users">
-        <div class="card">
-            <h2>Новый сотрудник</h2>
-            <div class="row">
-                <div><label>ФИО</label><input id="u-fullname"></div>
-                <div><label>Должность</label><input id="u-position"></div>
-            </div>
-            <div class="row">
-                <div><label>Логин (необязательно)</label><input id="u-username"></div>
-                <div><label>Временный пароль (необязательно)</label><input id="u-password"></div>
-            </div>
-            <button class="primary btn" onclick="createUser()">Создать</button>
+    <!-- ==================== ВОПРОСЫ БЕЗ ОТВЕТА ==================== -->
+    <div class="tab-pane" id="pane-questions">
+        <h2 class="section-title"><i data-lucide="help-circle"></i> Вопросы, на которые ассистент не ответил</h2>
+        <div class="stage-hint">
+            Сюда попадают вопросы сотрудников с пометкой ЧС и те, на которые в
+            регламентах не нашлось ответа. Ответьте — сотрудник увидит ответ в личном кабинете.
         </div>
-        <div class="card">
-            <h2>Пользователи</h2>
-            <table><thead><tr><th>ФИО</th><th>Логин</th><th>Роль</th><th>Активен</th><th></th></tr></thead>
-                <tbody id="users-body"><tr><td colspan="5" class="muted">Загрузка…</td></tr></tbody>
-            </table>
+        <div class="toolbar" style="margin-top:12px;">
+            <label style="font-size:14px;color:#475569;">
+                <input type="checkbox" id="questions-show-all" onchange="loadQuestions()"> Показать отвеченные
+            </label>
+            <button class="ghost-btn" onclick="loadQuestions()"><i data-lucide="refresh-cw"></i> Обновить</button>
         </div>
-    </section>
+        <div id="questions-list"><div class="empty-hint">Загрузка вопросов...</div></div>
+    </div>
 
-    <!-- ============ Вопросы (эскалации) ============ -->
-    <section id="questions">
-        <div class="card">
-            <h2>Вопросы без ответа ассистента</h2>
-            <div id="questions-body" class="muted">Загрузка…</div>
+    <!-- ==================== КОНСТРУКТОР ПЛАНА ==================== -->
+    <div class="tab-pane" id="pane-builder">
+        <h2 class="section-title"><i data-lucide="calendar-cog"></i> Готовые планы адаптации</h2>
+
+        <div class="stage-hint">
+            Планы определены заранее. Здесь можно посмотреть готовый план и его сообщения.
+            Назначить план сотруднику — на вкладке «Аккаунты» (поле «План адаптации»).
         </div>
-    </section>
+
+        <div class="toolbar" style="margin-top:16px;">
+            <div class="field">
+                <label>Готовый план</label>
+                <select id="plan-select" onchange="onPlanSelect()"><option value="">— выберите план —</option></select>
+            </div>
+            <span id="plan-status" style="color:#475569;font-size:14px;"></span>
+        </div>
+
+        <div id="schedule-result"></div>
+    </div>
+
+    <!-- ==================== ПОЛЬЗОВАТЕЛИ ==================== -->
+    <div class="tab-pane" id="pane-employees">
+        <h2 class="section-title"><i data-lucide="users"></i> Пользователи, роли и назначенные планы</h2>
+
+        <div class="card">
+            <div id="employee-form-title" style="font-weight:600;color:#0f172a;margin-bottom:12px;">Новый сотрудник</div>
+            <div class="employee-form">
+                <div class="field">
+                    <label>ФИО *</label>
+                    <input type="text" id="emp-full_name" placeholder="Иванов Иван Иванович">
+                </div>
+                <div class="field">
+                    <label>Логин <span id="login-hint" style="color:#94a3b8;">(можно выдать позже)</span></label>
+                    <input type="text" id="emp-username" placeholder="ivanov">
+                </div>
+                <div class="field">
+                    <label>Временный пароль</label>
+                    <input type="text" id="emp-password" placeholder="сотрудник сменит его при первом входе">
+                </div>
+                <div class="field">
+                    <label>Должность</label>
+                    <input type="text" id="emp-position" autocomplete="off" placeholder="Нажмите — выбор из штатки или введите свою">
+                </div>
+                <div class="field">
+                    <label>Подразделение</label>
+                    <input type="text" id="emp-department" placeholder="Автотранспортный цех">
+                </div>
+                <div class="field">
+                    <label>План адаптации</label>
+                    <select id="emp-plan_id"></select>
+                </div>
+                <div class="field">
+                    <label>Дата выхода на работу</label>
+                    <input type="date" id="emp-start_date">
+                </div>
+                <div class="field">
+                    <label>Статус</label>
+                    <select id="emp-status">
+                        <option value="planned">Запланирован</option>
+                        <option value="active">Проходит адаптацию</option>
+                        <option value="paused">Приостановлен</option>
+                        <option value="done">Завершил</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label>Наставник</label>
+                    <input type="text" id="emp-mentor" autocomplete="off" placeholder="Нажмите — выбор из сотрудников">
+                </div>
+                <div class="field">
+                    <label>Руководитель</label>
+                    <input type="text" id="emp-manager" autocomplete="off" placeholder="Нажмите — выбор из сотрудников">
+                </div>
+                <div class="field">
+                    <label>Контакт сотрудника</label>
+                    <input type="text" id="emp-contact" placeholder="телефон, telegram или email">
+                </div>
+            </div>
+            <div class="field" style="margin-top:12px;">
+                <label>Заметки</label>
+                <textarea id="emp-notes" placeholder="Любые пометки по сотруднику"></textarea>
+            </div>
+            <div class="toolbar">
+                <button class="primary-btn" onclick="saveEmployee()"><i data-lucide="save"></i> Сохранить</button>
+                <button class="ghost-btn" onclick="resetEmployeeForm()">Очистить форму</button>
+                <span id="employee-status" style="color:#475569;font-size:14px;"></span>
+            </div>
+        </div>
+
+        <div id="pending-block"></div>
+        <div class="section-head-row" style="margin-top:24px;">
+            <h2 class="section-title"><i data-lucide="users"></i> Список пользователей</h2>
+            <button class="del-btn" onclick="deleteNonAdmins()"><i data-lucide="user-x"></i> Удалить всех (кроме админов)</button>
+        </div>
+        <div id="employee-list"><div class="empty-hint">Загрузка списка пользователей...</div></div>
+        <div id="employee-schedule"></div>
+    </div>
+
+    <dialog id="credentials-dialog">
+        <h3 style="margin-top:0;" id="cred-title">Доступ</h3>
+        <input type="hidden" id="cred-user-id">
+        <label>Логин</label>
+        <input type="text" id="cred-username" placeholder="ivanov">
+        <label>Новый временный пароль</label>
+        <input type="text" id="cred-password" placeholder="оставьте пустым, чтобы не менять">
+        <div style="font-size:12px;color:#94a3b8;margin:-8px 0 14px;">
+            После смены пароля пользователь при следующем входе задаст свой собственный.
+        </div>
+        <div class="error" id="cred-error" style="display:none;margin-bottom:12px;"></div>
+        <div style="display:flex;gap:10px;">
+            <button class="primary-btn" style="flex:1;padding:9px;" onclick="submitCredentials()">Сохранить</button>
+            <button class="ghost-btn" onclick="document.getElementById('credentials-dialog').close()">Отмена</button>
+        </div>
+    </dialog>
+
+    <dialog id="password-dialog">
+        <h3 style="margin-top:0;">Смена пароля</h3>
+        <label>Текущий пароль</label>
+        <input type="password" id="old-password" autocomplete="current-password">
+        <label>Новый пароль (от 8 символов)</label>
+        <input type="password" id="new-password" autocomplete="new-password">
+        <div class="error" id="password-error" style="display:none;margin-bottom:12px;"></div>
+        <div style="display:flex;gap:10px;">
+            <button class="primary-btn" style="flex:1;padding:9px;" onclick="submitPasswordChange()">Сменить</button>
+            <button class="ghost-btn" onclick="document.getElementById('password-dialog').close()">Отмена</button>
+        </div>
+    </dialog>
+
+    <dialog id="doc-detail-dialog" style="max-width:900px;width:92vw;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+            <h3 style="margin:0;" id="doc-detail-title">Подробности документа</h3>
+            <button class="ghost-btn" onclick="document.getElementById('doc-detail-dialog').close()">Закрыть</button>
+        </div>
+        <div id="doc-detail-body" style="margin-top:12px;max-height:72vh;overflow:auto;"></div>
+    </dialog>
+
+    <dialog id="substage-map-dialog" style="max-width:920px;width:94vw;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+            <h3 style="margin:0;" id="substage-map-title">Куски документа по подэтапам</h3>
+            <button class="ghost-btn" onclick="document.getElementById('substage-map-dialog').close()">Закрыть</button>
+        </div>
+        <div class="stage-hint" style="margin-top:8px;">Каждый кусок текста показан с подэтапами, к которым он отнесён, и уверенностью (косинус к смыслу подэтапа). Низкая уверенность → вероятно, попал ошибочно.</div>
+        <div id="substage-map-body" style="margin-top:12px;max-height:74vh;overflow:auto;"></div>
+    </dialog>
+
+    <dialog id="folder-dialog" style="max-width:620px;width:92vw;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+            <h3 style="margin:0;" id="folder-dialog-title">Новая папка</h3>
+            <button class="ghost-btn" onclick="document.getElementById('folder-dialog').close()">Закрыть</button>
+        </div>
+        <div style="margin-top:14px;max-height:74vh;overflow:auto;">
+            <input type="hidden" id="folder-id">
+            <div class="field" style="margin-bottom:12px;"><label>Название *</label>
+                <input type="text" id="folder-name" placeholder="Например: Охрана труда"></div>
+            <div class="field" style="margin-bottom:12px;"><label>Описание</label>
+                <textarea id="folder-description" placeholder="Коротко: что это за категория"></textarea></div>
+            <div class="field" style="margin-bottom:6px;"><label>Критерии отнесения</label></div>
+            <div class="stage-hint" style="margin:0 0 8px;">Смысловые признаки, по которым ассистент относит документ к папке (не просто ключевые слова).</div>
+            <div id="folder-criteria"></div>
+            <button class="icon-btn" onclick="addCriterion()" style="margin-top:6px;"><i data-lucide="plus"></i> Добавить критерий</button>
+            <div class="error" id="folder-error" style="display:none;margin-top:12px;"></div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:16px;">
+            <button class="primary-btn" onclick="submitFolder()"><i data-lucide="save"></i> Сохранить</button>
+            <button class="ghost-btn" onclick="document.getElementById('folder-dialog').close()">Отмена</button>
+        </div>
+    </dialog>
 
     <script>
-        function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
-        function api(url, opts) {
-            return fetch(url, opts).then(r => { if (r.status === 401) { location.href = '/login'; throw new Error('401'); } return r; });
+        // ---------------- Общее ----------------
+        function escapeHtml(str) {
+            if (str === null || str === undefined) return '';
+            const div = document.createElement('div');
+            div.textContent = String(str);
+            return div.innerHTML;
         }
-        function flash(text, ok) {
-            document.getElementById('msg').innerHTML = `<div class="msg ${ok ? 'ok' : 'err'}">${esc(text)}</div>`;
-            setTimeout(() => { document.getElementById('msg').innerHTML = ''; }, 5000);
+
+        /** fetch с единой обработкой протухшей сессии: 401 -> обратно на форму входа. */
+        function api(url, options) {
+            return fetch(url, options).then(res => {
+                if (res.status === 401) {
+                    window.location.href = '/login';
+                    throw new Error('Сессия истекла');
+                }
+                return res;
+            });
         }
-        function logout() { fetch('/api/logout', { method: 'POST' }).finally(() => location.href = '/login'); }
+
+        function apiJson(url, options) {
+            return api(url, options).then(res => res.json().then(data => ({ ok: res.ok, data })));
+        }
+
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(`pane-${tab.dataset.tab}`).classList.add('active');
+                if (tab.dataset.tab === 'builder') ensureBuilderLoaded();
+                if (tab.dataset.tab === 'employees') ensureEmployeesLoaded();
+                if (tab.dataset.tab === 'questions') loadQuestions();
+                if (tab.dataset.tab === 'docs') loadStageBoard();
+            });
+        });
+
+        let currentUser = null;
+        let isOwner = false;
 
         api('/api/me').then(r => r.json()).then(me => {
-            document.getElementById('whoami').textContent = me.full_name || me.username;
-            if (me.role !== 'owner' && me.role !== 'admin') location.href = '/';
+            currentUser = me;
+            isOwner = me.role === 'owner';
+            const roleTitle = isOwner ? 'главный администратор' : 'администратор';
+            document.getElementById('whoami').innerHTML = `<i data-lucide="user"></i> ${escapeHtml(me.full_name || me.username)} · ${roleTitle}`;
+            if (employeesCache.length) renderEmployees(employeesCache);
         }).catch(() => {});
 
-        function showTab(id) {
-            document.querySelectorAll('nav.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === id));
-            document.querySelectorAll('section').forEach(s => s.classList.toggle('active', s.id === id));
+        function logout() {
+            fetch('/api/logout', { method: 'POST' }).finally(() => { window.location.href = '/login'; });
         }
 
-        // ---- Документы ----
-        function loadDocs() {
-            api('/documents').then(r => r.json()).then(d => {
-                const rows = (d.documents || []).map(doc => `
-                    <tr>
-                        <td>${esc(doc.filename)}</td>
-                        <td><span class="status ${esc(doc.status)}">${esc(doc.status)}</span>${doc.error ? `<div class="muted">${esc(doc.error)}</div>` : ''}</td>
-                        <td>${esc((doc.folders || []).join(', ') || '—')}</td>
-                        <td>${esc(doc.chunks ?? '—')}</td>
-                        <td>
-                            <button class="btn" onclick="reindexDoc('${esc(doc.filename)}')">Переиндексировать</button>
-                            <button class="btn danger" onclick="deleteDoc('${esc(doc.filename)}')">Удалить</button>
-                        </td>
-                    </tr>`).join('');
-                document.getElementById('docs-body').innerHTML = rows || '<tr><td colspan="5" class="muted">Пусто</td></tr>';
+        function openPasswordDialog() {
+            document.getElementById('password-error').style.display = 'none';
+            document.getElementById('old-password').value = '';
+            document.getElementById('new-password').value = '';
+            document.getElementById('password-dialog').showModal();
+        }
+
+        function submitPasswordChange() {
+            const errorBox = document.getElementById('password-error');
+            apiJson('/api/password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    old_password: document.getElementById('old-password').value,
+                    new_password: document.getElementById('new-password').value,
+                }),
+            }).then(({ ok, data }) => {
+                if (!ok) {
+                    errorBox.textContent = data.detail || 'Не удалось сменить пароль';
+                    errorBox.style.display = 'block';
+                    return;
+                }
+                alert('Пароль изменён. Войдите заново.');
+                window.location.href = '/login';
             });
         }
-        function uploadDoc() {
-            const f = document.getElementById('doc-file').files[0];
-            if (!f) return flash('Выберите файл', false);
-            const fd = new FormData(); fd.append('file', f);
-            flash('Загрузка…', true);
-            api('/documents/upload', { method: 'POST', body: fd }).then(r => r.json().then(d => ({ ok: r.ok, d })))
-                .then(({ ok, d }) => { flash(ok ? (d.duplicate ? d.message : 'Поставлено в очередь на индексацию') : (d.detail || 'Ошибка'), ok); loadDocs(); });
-        }
-        function reindexDoc(name) { api(`/documents/${encodeURIComponent(name)}/reanalyze`, { method: 'POST' }).then(() => { flash('Переанализ запущен', true); loadDocs(); }); }
-        function deleteDoc(name) { if (!confirm('Удалить ' + name + '?')) return; api(`/documents/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(() => { flash('Удалено', true); loadDocs(); }); }
-        function reanalyzeAll() { api('/documents/reanalyze', { method: 'POST' }).then(() => flash('Переанализ всей базы запущен', true)); }
 
-        // ---- Папки ----
+        // ---------------- База знаний ----------------
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const docList = document.getElementById('doc-list');
+        const folderGrid = document.getElementById('folder-grid');
+        const uploadProgress = document.getElementById('upload-progress');
+
+        dropzone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length) uploadFiles(fileInput.files);
+        });
+        ['dragenter', 'dragover'].forEach(evt => {
+            dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+        });
+        ['dragleave', 'drop'].forEach(evt => {
+            dropzone.addEventListener(evt, (e) => { e.preventDefault(); dropzone.classList.remove('dragover'); });
+        });
+        dropzone.addEventListener('drop', (e) => {
+            if (e.dataTransfer.files.length) uploadFiles(e.dataTransfer.files);
+        });
+
+        // Прогресс по каждому файлу: каноничное имя -> строка статуса. Файлы обрабатываются
+        // фоновой очередью на сервере. Статус тянем из durable-реестра GET /documents
+        // (переживает рестарт и работу в несколько uvicorn-воркеров), а не из джоб-стора
+        // в памяти процесса.
+        const uploadStatus = {};
+        const pendingDocs = new Set();   // каноничные имена, ждущие завершения индексации
+
+        function renderUploadStatus() {
+            const rows = Object.entries(uploadStatus);
+            uploadProgress.innerHTML = rows.length
+                ? rows.map(([name, line]) => `<div>${escapeHtml(name)}: ${line}</div>`).join('')
+                : '';
+        }
+
+        function uploadFiles(fileList) {
+            Array.from(fileList).forEach(uploadFile);
+            fileInput.value = '';
+        }
+
+        function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+            uploadStatus[file.name] = 'загрузка...';
+            renderUploadStatus();
+
+            apiJson('/documents/upload', { method: 'POST', body: formData })
+                .then(({ ok, data }) => {
+                    if (!ok) {
+                        uploadStatus[file.name] = `${escapeHtml(data.detail || 'ошибка загрузки')}`;
+                        renderUploadStatus();
+                        return;
+                    }
+                    // Каноничное имя из реестра (санитайзинг мог изменить исходное) —
+                    // по нему сверяемся со списком /documents.
+                    const canonical = data.filename || file.name;
+                    delete uploadStatus[file.name];
+                    uploadStatus[canonical] = 'в очереди на обработку...';
+                    pendingDocs.add(canonical);
+                    renderUploadStatus();
+                    bumpDocPolling();
+                })
+                .catch(err => {
+                    uploadStatus[file.name] = `${escapeHtml(err.message)}`;
+                    renderUploadStatus();
+                });
+        }
+
+        // Сверяем ожидающие файлы с durable-реестром /documents: обновляем строку
+        // статуса, а по завершении (indexed/error) убираем её и обновляем счётчики папок.
+        function reconcilePending(docs) {
+            if (!pendingDocs.size) return;
+            const byName = {};
+            docs.forEach(d => { byName[d.filename] = d; });
+            let settled = false;
+            pendingDocs.forEach(name => {
+                const doc = byName[name];
+                if (!doc) return;   // ещё не появился в реестре
+                if (doc.status === 'indexed' || doc.status === 'error') {
+                    delete uploadStatus[name];   // готово/ошибка уже видно в списке документов ниже
+                    pendingDocs.delete(name);
+                    settled = true;
+                } else if (doc.status === 'processing') {
+                    uploadStatus[name] = 'разбор docling → чанкинг → эмбеддинги...';
+                } else {
+                    uploadStatus[name] = 'в очереди на обработку...';
+                }
+            });
+            renderUploadStatus();
+            if (settled) loadFolders();   // документ отнесён к папкам -> пересчитать «N док.»
+        }
+
+        function statusLabel(status) {
+            switch (status) {
+                case 'uploaded': return 'Загружен';
+                case 'processing': return 'Обрабатывается (docling)...';
+                case 'indexed': return 'Готов к поиску';
+                case 'reanalyzing': return 'Переанализ…';
+                case 'error': return 'Ошибка';
+                default: return status;
+            }
+        }
+
+        function formatSize(bytes) {
+            if (!bytes && bytes !== 0) return '';
+            const kb = bytes / 1024;
+            return kb < 1024 ? `${kb.toFixed(0)} КБ` : `${(kb / 1024).toFixed(1)} МБ`;
+        }
+
+        let anyReanalyzing = false;   // есть документы в статусе reanalyzing -> опрашиваем чаще
+        function loadDocuments() {
+            return api('/documents').then(r => r.json()).then(d => {
+                const docs = d.documents || [];
+                anyReanalyzing = docs.some(doc => doc.status === 'reanalyzing');
+                renderDocuments(docs);
+                reconcilePending(docs);
+            }).catch(() => {});
+        }
+
+        // ---------------- Смысловые папки (управляет человек) ----------------
+        let allFolders = [];
+
         function loadFolders() {
-            api('/folders').then(r => r.json()).then(d => {
-                const rows = (d.folders || []).map(f => `
-                    <tr>
-                        <td>${esc(f.name)}<div class="muted">${esc(f.slug)}</div></td>
-                        <td>${esc((f.criteria || []).join(', ') || '—')}</td>
-                        <td>${esc(f.documents ?? 0)}</td>
-                        <td>${f.enabled ? 'да' : 'нет'}</td>
-                        <td><button class="btn danger" onclick="deleteFolder('${esc(f.id)}')">Удалить</button></td>
-                    </tr>`).join('');
-                document.getElementById('folders-body').innerHTML = rows || '<tr><td colspan="5" class="muted">Пусто</td></tr>';
-            });
+            return api('/folders').then(r => r.json())
+                .then(d => { allFolders = d.folders || []; renderFolders(); loadStageBoard(); }).catch(() => {});
         }
-        function createFolder() {
-            const name = document.getElementById('f-name').value.trim();
-            if (!name) return flash('Укажите название', false);
-            const criteria = document.getElementById('f-criteria').value.split(',').map(s => s.trim()).filter(Boolean);
-            api('/folders', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, description: document.getElementById('f-desc').value, criteria }) })
-                .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
-                    flash(ok ? 'Папка создана' : (d.detail || 'Ошибка'), ok);
-                    if (ok) { document.getElementById('f-name').value = ''; document.getElementById('f-criteria').value = ''; document.getElementById('f-desc').value = ''; loadFolders(); }
+
+        const BEXT = { pdf:'pdf', docx:'docx', doc:'docx', xls:'xls', xlsx:'xls', ppt:'ppt', pptx:'ppt' };
+        const BLABEL = { pdf:'PDF', docx:'DOCX', doc:'DOCX', xls:'XLSX', xlsx:'XLSX', ppt:'PPTX', pptx:'PPTX' };
+        function bDocCard(d) {
+            const ext = BEXT[(d.mime || '').toLowerCase()] || 'gen';
+            const lab = BLABEL[(d.mime || '').toLowerCase()] || ((d.mime || '').toUpperCase().slice(0, 4) || 'ФАЙЛ');
+            const sc = (d.score != null) ? `<div class="sc">уверенность ${Number(d.score).toFixed(2)}</div>` : '';
+            return `<div class="bdoc" data-fn="${escapeHtml(d.filename || '')}" onclick="openSubstageMap(this.dataset.fn)" title="Показать куски текста и критерий попадания"><div class="ext ${ext}">${lab}</div><div><div class="nm">${escapeHtml(d.filename || '')}</div>${sc}</div></div>`;
+        }
+        function bCountDocs(s) { let n = (s.documents || []).length; (s.substages || []).forEach(x => n += (x.documents || []).length); return n; }
+        function renderStageBoard(b) {
+            const el = document.getElementById('stage-board');
+            if (!el) return;
+            let html = '';
+            (b.stages || []).forEach((s, i) => {
+                let rows = '';
+                (s.substages || []).forEach(sub => {
+                    rows += `<div class="sub-r"><div><div class="sub-t">${escapeHtml(sub.title || '')}</div><div class="sub-c">${(sub.documents || []).length} док.</div></div>`
+                          + `<div class="sub-docs">${(sub.documents || []).length ? sub.documents.map(bDocCard).join('') : '<div class="bempty">— нет документов —</div>'}</div></div>`;
+                });
+                if ((s.documents || []).length) {
+                    rows += `<div class="sub-r"><div><div class="sub-t">В этапе (без подэтапа)</div></div><div class="sub-docs">${s.documents.map(bDocCard).join('')}</div></div>`;
+                }
+                html += `<section class="stg"><header class="stg-head"><div class="stg-n">${i + 1}</div>`
+                      + `<div><div class="stg-tt">${escapeHtml(s.title || '')}</div><div class="stg-dd">${escapeHtml(s.description || '')}</div></div>`
+                      + `<span class="stg-count">${bCountDocs(s)} док.</span></header>${rows || '<div class="sub-r"><div class="bempty">нет подэтапов</div></div>'}</section>`;
+            });
+            if ((b.unassigned || []).length) {
+                html += `<section class="stg unassigned"><header class="stg-head"><div class="stg-n">?</div>`
+                      + `<div><div class="stg-tt">Без уверенной привязки</div><div class="stg-dd">Загружены, но не отнесены к этапу — проверьте вручную</div></div>`
+                      + `<span class="stg-count">${b.unassigned.length} док.</span></header>`
+                      + `<div class="sub-r"><div><div class="sub-t">Требует решения</div></div><div class="sub-docs">${b.unassigned.map(bDocCard).join('')}</div></div></section>`;
+            }
+            el.innerHTML = html || '<div class="empty-hint">Пока нет ни этапов, ни документов.</div>';
+            refreshIcons();
+        }
+        function loadStageBoard() {
+            const el = document.getElementById('stage-board');
+            if (!el) return;
+            api('/documents/board').then(r => r.ok ? r.json() : null).then(b => {
+                if (!b) { el.innerHTML = '<div class="empty-hint">Нет данных.</div>'; return; }
+                renderStageBoard(b);
+            }).catch(() => { el.innerHTML = '<div class="empty-hint">Не удалось загрузить структуру.</div>'; });
+        }
+
+        function smapClass(s) { return s >= 0.6 ? 'hi' : (s >= 0.5 ? 'mid' : 'lo'); }
+        function openSubstageMap(filename) {
+            if (!filename) return;
+            const dlg = document.getElementById('substage-map-dialog');
+            document.getElementById('substage-map-title').textContent = 'Куски документа: ' + filename;
+            const body = document.getElementById('substage-map-body');
+            body.innerHTML = '<div class="empty-hint">Загрузка…</div>';
+            dlg.showModal();
+            api(`/documents/${encodeURIComponent(filename)}/substage-map`).then(r => r.ok ? r.json() : null).then(d => {
+                if (!d || !(d.chunks || []).length) { body.innerHTML = '<div class="empty-hint">Нет данных по кускам текста.</div>'; return; }
+                body.innerHTML = d.chunks.map((c, i) => {
+                    const sec = `Кусок ${i + 1}${c.section ? ' · ' + escapeHtml(c.section) : ''}${c.page != null ? ' · стр. ' + c.page : ''}`;
+                    if (c.meaningful === false) {
+                        return `<div class="smap-chunk smap-junk"><div class="smap-sec">${sec} · служебный текст (в подэтапы не идёт)</div>`
+                             + `<div class="txt">${escapeHtml((c.text || '').slice(0, 400))}</div></div>`;
+                    }
+                    const chips = (c.matches || []).map(m =>
+                        `<span class="smap-chip ${smapClass(m.score)}" title="Критерий подэтапа: ${escapeHtml(m.brief || '—')}">`
+                        + `${escapeHtml(m.stage_title)} → ${escapeHtml(m.title)} <small>${Number(m.score).toFixed(2)}</small></span>`).join('');
+                    const subs = chips ? `<div class="smap-subs">${chips}</div>` : '<div class="smap-none">— ни одному подэтапу не соответствует —</div>';
+                    return `<div class="smap-chunk"><div class="smap-sec">${sec}</div>`
+                         + `<div class="txt">${escapeHtml((c.text || '').slice(0, 600))}</div>${subs}</div>`;
+                }).join('');
+            }).catch(() => { body.innerHTML = '<div class="empty-hint">Ошибка загрузки.</div>'; });
+        }
+
+        function renderFolders() {
+            if (!folderGrid) return;   // сетка папок убрана из UI — рендерить некуда
+            if (!allFolders.length) {
+                folderGrid.innerHTML = `<div class="empty-hint">Папок пока нет — создайте первую.</div>`;
+                return;
+            }
+            folderGrid.innerHTML = allFolders.map(f => `
+                <div class="folder-card ${f.enabled ? '' : 'disabled'}">
+                    <div class="name"><i data-lucide="folder"></i> ${escapeHtml(f.name)}${f.enabled ? '' : ' <span class="badge">выкл.</span>'}</div>
+                    ${f.description ? `<div class="desc">${escapeHtml(f.description)}</div>` : ''}
+                    <div class="count">${f.criteria.length} критериев · ${f.documents || 0} док.</div>
+                    <div class="row-actions">
+                        <button class="icon-btn" title="Показать чанки" onclick="showFolderChunks('${escapeHtml(f.slug)}','${escapeHtml(f.name)}')"><i data-lucide="layers"></i></button>
+                        <button class="icon-btn" title="Изменить" onclick="openFolderDialog('${f.id}')"><i data-lucide="pencil"></i></button>
+                        <button class="icon-btn" title="${f.enabled ? 'Отключить' : 'Включить'}" onclick="toggleFolder('${f.id}',${!f.enabled})"><i data-lucide="${f.enabled ? 'eye-off' : 'eye'}"></i></button>
+                        <button class="icon-btn danger" title="Удалить" onclick="deleteFolder('${f.id}')"><i data-lucide="trash-2"></i></button>
+                    </div>
+                </div>
+            `).join('');
+            refreshIcons();
+        }
+
+        function critRow(val = '') {
+            const div = document.createElement('div');
+            div.className = 'crit-row';
+            div.innerHTML = `<textarea placeholder="Признак, по которому документ относится к папке"></textarea>` +
+                `<button class="icon-btn danger" onclick="this.parentElement.remove()"><i data-lucide="x"></i></button>`;
+            div.querySelector('textarea').value = val;
+            return div;
+        }
+        function addCriterion() { document.getElementById('folder-criteria').appendChild(critRow()); refreshIcons(); }
+
+        function openFolderDialog(id) {
+            const f = id ? allFolders.find(x => x.id === id) : null;
+            document.getElementById('folder-dialog-title').textContent = f ? 'Изменить папку' : 'Новая папка';
+            document.getElementById('folder-id').value = f ? f.id : '';
+            document.getElementById('folder-name').value = f ? f.name : '';
+            document.getElementById('folder-description').value = f ? f.description : '';
+            const crit = document.getElementById('folder-criteria');
+            crit.innerHTML = '';
+            const list = f ? f.criteria : [];
+            (list.length ? list : ['']).forEach(c => crit.appendChild(critRow(c)));
+            document.getElementById('folder-error').style.display = 'none';
+            document.getElementById('folder-dialog').showModal();
+            refreshIcons();
+        }
+
+        function submitFolder() {
+            const id = document.getElementById('folder-id').value;
+            const name = document.getElementById('folder-name').value.trim();
+            const err = document.getElementById('folder-error');
+            if (!name) { err.textContent = 'Укажите название'; err.style.display = 'block'; return; }
+            const criteria = [...document.querySelectorAll('#folder-criteria textarea')].map(t => t.value.trim()).filter(Boolean);
+            const description = document.getElementById('folder-description').value.trim();
+            const body = JSON.stringify({ name, description, criteria });
+            const opts = { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body };
+            api(id ? '/folders/' + id : '/folders', opts)
+                .then(r => r.json().then(d => ({ ok: r.ok, d })))
+                .then(({ ok, d }) => {
+                    if (!ok) { err.textContent = d.detail || 'Не удалось сохранить'; err.style.display = 'block'; return; }
+                    document.getElementById('folder-dialog').close();
+                    loadFolders();
                 });
         }
-        function deleteFolder(id) { if (!confirm('Удалить папку? Документы останутся в базе.')) return; api(`/folders/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(() => { flash('Папка удалена', true); loadFolders(); }); }
 
-        // ---- Пользователи ----
-        function loadUsers() {
+        function toggleFolder(id, enabled) {
+            api('/folders/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) })
+                .then(() => loadFolders());
+        }
+
+        function deleteFolder(id) {
+            const f = allFolders.find(x => x.id === id);
+            if (!confirm(`Удалить папку «${f ? f.name : ''}»? Документы останутся в общей базе.`)) return;
+            api('/folders/' + id, { method: 'DELETE' }).then(() => loadFolders());
+        }
+
+        function renderDocuments(docs) {
+            if (!docs.length) {
+                docList.innerHTML = `<div class="empty-hint">Пока нет загруженных документов — добавьте первый регламент выше.</div>`;
+                return;
+            }
+            docList.innerHTML = docs.map(doc => {
+                const meta = [
+                    doc.size_bytes !== undefined ? formatSize(doc.size_bytes) : null,
+                    doc.chunks ? `${doc.chunks} чанков` : null,
+                    doc.uploaded_at ? doc.uploaded_at.replace('T', ' ') : null,
+                ].filter(Boolean).join(' · ');
+                const folderSlugs = doc.folders || [];
+                const folderLine = folderSlugs.length
+                    ? `<div class="chips">${folderSlugs.map(s => `<span class="folder-tag"><i data-lucide="folder"></i> ${escapeHtml(folderName(s))}</span>`).join('')}</div>`
+                    : (doc.status === 'indexed' ? `<div class="doc-meta">Общая база «Все документы» (без папки)</div>` : '');
+                const summaryLine = doc.summary
+                    ? `<div class="doc-meta" style="color:#475569;margin-top:4px;">${escapeHtml(doc.summary.slice(0, 200))}${doc.summary.length > 200 ? '…' : ''}</div>` : '';
+                const similar = (doc.similar || []);
+                const similarLine = similar.length
+                    ? `<div class="warn" style="margin-top:8px;"><i data-lucide="triangle-alert"></i> Похоже на: ${similar.map(s => escapeHtml(s.filename)).join(', ')} — возможен дубль/обновление. Удалите устаревший документ или дайте уточнение.</div>` : '';
+                const clarLine = doc.clarification
+                    ? `<div class="doc-meta" style="color:#0369a1;margin-top:4px;"><i data-lucide="info"></i> Уточнение: ${escapeHtml(doc.clarification)}</div>` : '';
+                const errorLine = doc.status === 'error' && doc.error
+                    ? `<div class="doc-meta" style="color:#dc2626;">${escapeHtml(doc.error)}</div>` : '';
+                return `
+                    <div class="doc-item" style="flex-direction:column;align-items:stretch;">
+                      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                        <div class="doc-info">
+                            <div class="doc-name" title="${escapeHtml(doc.filename)}"><i data-lucide="file-text"></i> ${escapeHtml(doc.filename)}</div>
+                            ${folderLine}
+                            ${summaryLine}
+                            <div class="doc-meta">${meta}</div>
+                            ${clarLine}
+                            ${errorLine}
+                        </div>
+                        <div class="doc-status">
+                            <span class="status-badge ${doc.status}">${statusLabel(doc.status)}</span>
+                            ${doc.chunks ? `<button class="icon-btn" title="Подробнее" onclick="showDocDetail('${escapeHtml(doc.filename)}')"><i data-lucide="search"></i></button>` : ''}
+                            ${doc.chunks ? `<button class="icon-btn" title="Переанализировать" onclick="reanalyzeDoc('${escapeHtml(doc.filename)}')"><i data-lucide="refresh-cw"></i></button>` : ''}
+                            <button class="del-btn" onclick="deleteDocument('${escapeHtml(doc.filename)}')">Удалить</button>
+                        </div>
+                      </div>
+                      ${similarLine}
+                      ${similar.length ? `<div style="display:flex;gap:8px;margin-top:8px;">
+                            <input type="text" id="clar-${escapeHtml(doc.filename)}" placeholder="Уточнение для ассистента (напр.: старый документ неактуален)" style="flex:1;">
+                            <button class="ghost-btn" onclick="clarifyDoc('${escapeHtml(doc.filename)}')"><i data-lucide="save"></i> Сохранить</button>
+                        </div>` : ''}
+                    </div>
+                `;
+            }).join('');
+            refreshIcons();
+        }
+
+        function folderName(slug) { const f = allFolders.find(x => x.slug === slug); return f ? f.name : slug; }
+
+        function reanalyzeDoc(filename) {
+            api('/documents/' + encodeURIComponent(filename) + '/reanalyze', { method: 'POST' })
+                .then(() => { anyReanalyzing = true; bumpDocPolling(); });   // статус подтянется опросом
+        }
+
+        function clarifyDoc(filename) {
+            const val = (document.getElementById('clar-' + filename) || {}).value || '';
+            if (!val.trim()) return;
+            api('/documents/' + encodeURIComponent(filename) + '/clarify', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clarification: val.trim() })
+            }).then(() => loadDocuments());
+        }
+
+        function reanalyzeAll() {
+            if (!confirm('Запустить повторный анализ всей базы под текущую структуру папок?')) return;
+            api('/documents/reanalyze', { method: 'POST' })
+                .then(() => { anyReanalyzing = true; bumpDocPolling(); });   // статусы «Переанализ…» подтянутся опросом
+        }
+
+        function assignChunksToStages() {
+            if (!confirm('Разложить все чанки по этапам адаптации? Нужно после загрузки документов, чтобы генерация плана брала чанки нужного этапа.')) return;
+            setStatus('Раскладываю чанки по этапам…');
+            api('/chunks/assign-stages', { method: 'POST' })
+                .then(() => setStatus('Раскладка чанков по этапам запущена (идёт в фоне)'));
+        }
+
+        // ---------------- Штатное расписание ----------------
+        const STAFFING_LABELS = { full_name: 'ФИО', position: 'Должность', department: 'Отдел', start_date: 'Дата приёма/выхода' };
+        const STAFFING_KEYS = ['full_name', 'position', 'department', 'start_date'];
+        let staffingRecords = [];
+
+        function staffingPreview(fileArg) {
+            const file = fileArg || document.getElementById('staffing-file').files[0];
+            const status = document.getElementById('staffing-status');
+            const preview = document.getElementById('staffing-preview');
+            const result = document.getElementById('staffing-result');
+            result.innerHTML = ''; preview.innerHTML = '';
+            if (!file) { status.textContent = 'Выберите файл xlsx.'; return; }
+            status.textContent = `ИИ разбирает «${file.name}»…`;
+            const fd = new FormData(); fd.append('file', file);
+            apiJson('/staffing/preview', { method: 'POST', body: fd })
+                .then(({ ok, data }) => {
+                    if (!ok) { status.innerHTML = `<span class="err">${escapeHtml(data.detail || 'ошибка разбора')}</span>`; return; }
+                    staffingRecords = data.records || [];
+                    const withName = staffingRecords.filter(r => (r.full_name || '').trim()).length;
+                    status.textContent = `Найдено строк: ${data.count} (с ФИО: ${withName}, вакансий: ${data.count - withName}). Поля можно отредактировать.`;
+                    window._staffingCols = (data.mapping || {}).columns || {};
+                    renderStaffingPreview(window._staffingCols);
+                })
+                .catch(err => { status.innerHTML = `<span class="err">${escapeHtml(err.message)}</span>`; });
+        }
+
+        function renderStaffingPreview(cols) {
+            const preview = document.getElementById('staffing-preview');
+            if (!staffingRecords.length) {
+                preview.innerHTML = '<div class="warn"><i data-lucide="triangle-alert"></i> В таблице не найдено данных. Проверьте файл или добавьте строки вручную.</div>';
+                refreshIcons();
+                return;
+            }
+            const head = STAFFING_KEYS.map(f => `<th>${STAFFING_LABELS[f]}</th>`).join('') + '<th></th>';
+            const rows = staffingRecords.map((r, i) =>
+                `<tr>${STAFFING_KEYS.map(f =>
+                    `<td><input type="text" style="width:100%;box-sizing:border-box;" value="${escapeHtml(r[f] || '')}"
+                          oninput="staffingRecords[${i}]['${f}']=this.value"></td>`).join('')}
+                 <td><button class="icon-btn danger" title="Убрать строку" onclick="staffingRemoveRow(${i})"><i data-lucide="x"></i></button></td></tr>`).join('');
+            preview.innerHTML = `
+                <div class="section-head-row" style="margin:14px 0 6px;">
+                    <div class="doc-meta muted">Строки с ФИО станут профилями, без ФИО — вакансиями.</div>
+                    <button class="ghost-btn" onclick="staffingImport()"><i data-lucide="user-plus"></i> Создать (${staffingRecords.length})</button>
+                </div>
+                <div style="overflow-x:auto;"><table class="tst" style="font-size:13px;">
+                    <thead><tr>${head}</tr></thead><tbody id="staffing-tbody">${rows}</tbody></table></div>`;
+            refreshIcons();
+        }
+
+        function staffingRemoveRow(i) {
+            staffingRecords.splice(i, 1);
+            renderStaffingPreview(window._staffingCols || {});
+        }
+
+        function staffingImport() {
+            if (!staffingRecords.length) return;
+            if (!confirm(`Создать ${staffingRecords.length} записей? Строки с ФИО — профили (существующие по ФИО пропускаются), без ФИО — вакансии.`)) return;
+            const status = document.getElementById('staffing-status');
+            status.textContent = 'Создаём…';
+            apiJson('/staffing/import', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ records: staffingRecords })
+            }).then(({ ok, data }) => {
+                if (!ok) { status.innerHTML = `<span class="err">${escapeHtml(data.detail || 'ошибка создания')}</span>`; return; }
+                const profiles = data.profiles || [], vacancies = data.vacancies || [], skipped = data.skipped || [];
+                status.textContent = `Профилей: ${profiles.length}, вакансий: ${vacancies.length}, пропущено: ${skipped.length}.`;
+                window._staffingCreated = profiles;
+                const pRows = profiles.map(c =>
+                    `<tr><td>${escapeHtml(c.full_name)}</td><td class="mono">${escapeHtml(c.username)}</td><td class="mono">${escapeHtml(c.password)}</td><td>${escapeHtml(c.position || '')}</td></tr>`).join('');
+                const vRows = vacancies.map(v => `<tr><td>${escapeHtml(v.position)}</td><td>${escapeHtml(v.department || '')}</td></tr>`).join('');
+                const skipRows = skipped.map(s => `<div class="muted">${escapeHtml(s.full_name)} — ${escapeHtml(s.reason)}</div>`).join('');
+                document.getElementById('staffing-result').innerHTML = `
+                    ${profiles.length ? `<div class="warn" style="margin:12px 0;"><i data-lucide="triangle-alert"></i> Пароли показываются один раз — выгрузите их сейчас.</div>
+                    <button class="ghost-btn" onclick="downloadStaffingCsv()"><i data-lucide="download"></i> Скачать логины и пароли (CSV)</button>
+                    <div style="overflow-x:auto;margin-top:10px;"><table class="tst" style="font-size:13px;">
+                        <thead><tr><th>ФИО</th><th>Логин</th><th>Пароль</th><th>Должность</th></tr></thead><tbody>${pRows}</tbody></table></div>` : ''}
+                    ${vacancies.length ? `<div style="margin-top:14px;font-weight:600;">Вакансии (${vacancies.length}):</div>
+                    <div style="overflow-x:auto;margin-top:6px;"><table class="tst" style="font-size:13px;">
+                        <thead><tr><th>Должность</th><th>Отдел</th></tr></thead><tbody>${vRows}</tbody></table></div>` : ''}
+                    ${skipRows ? `<div style="margin-top:12px;"><strong>Пропущены:</strong>${skipRows}</div>` : ''}`;
+                refreshIcons();
+                employeesLoaded = false;
+                loadEmployees();
+            }).catch(err => { status.innerHTML = `<span class="err">${escapeHtml(err.message)}</span>`; });
+        }
+
+        // Dropzone штатки: клик выбирает файл, drag-n-drop роняет файл — сразу разбираем.
+        (function () {
+            const dz = document.getElementById('staffing-dropzone');
+            const inp = document.getElementById('staffing-file');
+            if (!dz || !inp) return;
+            dz.addEventListener('click', () => inp.click());
+            inp.addEventListener('change', () => { if (inp.files[0]) staffingPreview(inp.files[0]); });
+            ['dragenter', 'dragover'].forEach(evt => dz.addEventListener(evt, e => { e.preventDefault(); dz.classList.add('dragover'); }));
+            ['dragleave', 'drop'].forEach(evt => dz.addEventListener(evt, e => { e.preventDefault(); dz.classList.remove('dragover'); }));
+            dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) staffingPreview(f); });
+        })();
+
+        function downloadStaffingCsv() {
+            const created = window._staffingCreated || [];
+            if (!created.length) return;
+            const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+            const lines = [['ФИО', 'Логин', 'Пароль', 'Должность'].join(';')]
+                .concat(created.map(c => [c.full_name, c.username, c.password, c.position || ''].map(esc).join(';')));
+            const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'staffing_credentials.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        }
+
+        function showDocDetail(filename) {
+            const dialog = document.getElementById('doc-detail-dialog');
+            const body = document.getElementById('doc-detail-body');
+            document.getElementById('doc-detail-title').textContent = `${filename}`;
+            body.innerHTML = `<div class="empty-hint">Загружаем чанки и векторы…</div>`;
+            dialog.showModal();
+            apiJson(`/documents/${encodeURIComponent(filename)}/chunks`)
+                .then(({ ok, data }) => {
+                    if (!ok) { body.innerHTML = `<div class="warn"><i data-lucide="triangle-alert"></i> ${escapeHtml(data.detail || 'Не удалось получить данные')}</div>`; return; }
+                    body.innerHTML = renderDocDetail(data);
+                })
+                .catch(err => { body.innerHTML = `<div class="error">Ошибка: ${escapeHtml(err.message)}</div>`; });
+        }
+
+        function showFolderChunks(slug, name) {
+            const dialog = document.getElementById('doc-detail-dialog');
+            const body = document.getElementById('doc-detail-body');
+            document.getElementById('doc-detail-title').textContent = `Папка: ${name}`;
+            body.innerHTML = `<div class="empty-hint">Загружаем чанки папки…</div>`;
+            dialog.showModal();
+            apiJson(`/folders/${encodeURIComponent(slug)}/chunks`)
+                .then(({ ok, data }) => {
+                    if (!ok) { body.innerHTML = `<div class="warn"><i data-lucide="triangle-alert"></i> ${escapeHtml(data.detail || 'Не удалось получить данные')}</div>`; return; }
+                    body.innerHTML = renderFolderChunks(data);
+                    refreshIcons();
+                })
+                .catch(err => { body.innerHTML = `<div class="error">Ошибка: ${escapeHtml(err.message)}</div>`; });
+        }
+
+        function renderFolderChunks(data) {
+            const chunks = data.chunks || [];
+            if (!chunks.length) return `<div class="empty-hint">В этой папке пока нет чанков. Загрузите/переанализируйте документы под текущую структуру папок.</div>`;
+            const head = `<div class="doc-meta" style="margin-bottom:12px;">
+                Чанков в папке: <strong>${data.count}</strong>${data.truncated ? ' (показаны первые)' : ''}.
+                Это конкретные фрагменты документов, отнесённые к папке по смыслу — именно из них
+                формируется ответ на вопрос в этой теме.
+            </div>`;
+            const rows = chunks.map(c => {
+                const meta = [
+                    c.section ? `§ ${escapeHtml(c.section)}` : null,
+                    c.page != null ? `стр. ${c.page}` : null,
+                    c.length != null ? `${c.length} симв.` : null,
+                ].filter(Boolean).join(' · ');
+                return `<div class="card" style="margin-bottom:10px;">
+                    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                        <strong><i data-lucide="file-text"></i> ${escapeHtml(c.source || '—')} · чанк #${c.chunk_index != null ? c.chunk_index : '?'}</strong>
+                        <small style="color:#94a3b8;">id: ${escapeHtml(c.id)}</small>
+                    </div>
+                    ${meta ? `<div class="doc-meta" style="margin:4px 0;">${meta}</div>` : ''}
+                    <div class="msg-text" style="white-space:pre-wrap;margin-top:6px;">${escapeHtml(c.text || '—')}</div>
+                </div>`;
+            }).join('');
+            return head + rows;
+        }
+
+        function renderDocDetail(data) {
+            const chunks = data.chunks || [];
+            const dim = chunks.length ? chunks[0].vector.dim : 0;
+            const head = `<div class="doc-meta" style="margin-bottom:12px;">
+                Всего чанков: <strong>${chunks.length}</strong> ·
+                размерность вектора: <strong>${dim}</strong> ·
+                модель эмбеддинга: <strong>bge-m3</strong>.
+                Каждый чанк — отдельная точка в Qdrant: слева текст, ушедший в эмбеддинг,
+                справа — вектор этого текста (норма и первые 16 из ${dim} значений).
+            </div>`;
+            const rows = chunks.map(c => {
+                const headings = (c.headings || []).filter(Boolean).join(' / ');
+                const meta = [
+                    c.section ? `§ ${escapeHtml(c.section)}` : null,
+                    c.page != null ? `стр. ${c.page}` : null,
+                    c.length != null ? `${c.length} симв.` : null,
+                    `папки: ${(c.folders && c.folders.length) ? c.folders.map(s => escapeHtml(folderName(s))).join(', ') : '— (общая база)'}`,
+                ].filter(Boolean).join(' · ');
+                const vec = c.vector || { dim: 0, norm: 0, preview: [] };
+                const preview = (vec.preview || []).map(v => v.toFixed(4)).join(', ');
+                return `<div class="card" style="margin-bottom:10px;">
+                    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                        <strong>Чанк #${c.chunk_index != null ? c.chunk_index : '?'}</strong>
+                        <small style="color:#94a3b8;">id: ${escapeHtml(c.id)}</small>
+                    </div>
+                    <div class="doc-meta" style="margin:4px 0;">${meta}</div>
+                    ${headings ? `<div class="doc-meta" style="color:#475569;"><i data-lucide="milestone"></i> ${escapeHtml(headings)}</div>` : ''}
+                    <div class="chunk-detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;">
+                        <div>
+                            <div class="doc-meta" style="margin-bottom:4px;">Текст (ушёл в эмбеддинг):</div>
+                            <div class="msg-text" style="white-space:pre-wrap;">${escapeHtml(c.text || '—')}</div>
+                        </div>
+                        <div>
+                            <div class="doc-meta" style="margin-bottom:4px;">Вектор: dim=${vec.dim}, ‖v‖=${vec.norm}</div>
+                            <code style="display:block;background:#0f172a;color:#a5b4fc;padding:8px;border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all;">[${preview}${vec.dim > (vec.preview || []).length ? ', …' : ''}]</code>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+            return head + (rows || `<div class="empty-hint">Чанков нет.</div>`);
+        }
+
+        function deleteDocument(filename) {
+            if (!confirm(`Удалить документ "${filename}" и все его данные из индекса?`)) return;
+            api(`/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+                .then(() => { loadDocuments(); loadFolders(); })
+                .catch(err => alert(`Ошибка удаления: ${err.message}`));
+        }
+
+        // Самопланирующийся опрос: чаще, пока есть незавершённые загрузки; иначе редко.
+        let docPollTimer = null;
+        function scheduleDocPoll() {
+            clearTimeout(docPollTimer);
+            docPollTimer = setTimeout(() => {
+                loadDocuments().finally(scheduleDocPoll);
+            }, (pendingDocs.size || anyReanalyzing) ? 2000 : 8000);
+        }
+        function bumpDocPolling() { scheduleDocPoll(); }   // ускорить сразу после загрузки файла
+
+        loadDocuments();
+        loadFolders();
+        scheduleDocPoll();
+
+        // ---------------- Готовые планы (только просмотр) ----------------
+        let plan = { plan_id: null };
+        let builderLoaded = false;
+
+        function ensureBuilderLoaded() {
+            if (builderLoaded) return;
+            builderLoaded = true;
+            refreshPlanList();
+        }
+
+        function fillPlanSelect(plans) {
+            const select = document.getElementById('plan-select');
+            const current = plan.plan_id || '';
+            select.innerHTML = `<option value="">— выберите план —</option>` + plans.map(p =>
+                `<option value="${escapeHtml(p.plan_id)}">${escapeHtml(p.title)}${p.role ? ' · ' + escapeHtml(p.role) : ''}</option>`
+            ).join('');
+            select.value = current;
+        }
+
+        function refreshPlanList() {
+            return api('/plans').then(r => r.json()).then(d => {
+                fillPlanSelect(d.plans || []);
+                if (typeof fillEmployeePlanSelect === 'function' && document.getElementById('emp-plan_id')) {
+                    fillEmployeePlanSelect(d.plans || []);
+                }
+            });
+        }
+
+        function onPlanSelect() {
+            const id = document.getElementById('plan-select').value;
+            plan.plan_id = id || null;
+            const box = document.getElementById('schedule-result');
+            if (!id) { box.innerHTML = ''; setStatus(''); return; }
+            box.innerHTML = '<div class="stage-hint">Загрузка плана…</div>';
+            loadScheduleIfAny();
+        }
+
+        function setStatus(text) {
+            const el = document.getElementById('plan-status');
+            if (el) el.textContent = text || '';
+        }
+
+        function loadScheduleIfAny() {
+            if (!plan.plan_id) return;
+            api(`/plans/${encodeURIComponent(plan.plan_id)}/schedule`)
+                .then(res => res.ok ? res.json() : null)
+                .then(schedule => {
+                    if (schedule) renderSchedule(schedule);
+                    else document.getElementById('schedule-result').innerHTML =
+                        '<div class="stage-hint">У плана ещё нет готовых сообщений.</div>';
+                })
+                .catch(() => {});
+        }
+
+        function whenLabel(msg) {
+            if (msg.schedule.send_at) return msg.schedule.send_at.replace('T', ' ');
+            const anchor = msg.schedule.anchor === 'before_start' ? 'до выхода' : 'от выхода';
+            const offset = msg.schedule.offset_days;
+            return `${offset >= 0 ? '+' : ''}${offset} дн. (${anchor}), ${msg.schedule.time}`;
+        }
+
+        function messageRows(messages) {
+            return (messages || []).map(msg => `
+                <tr>
+                    <td>${msg.stage.order}. ${escapeHtml(msg.stage.title)}</td>
+                    <td>${msg.substage.order}. ${escapeHtml(msg.substage.title)}<div class="msg-meta">${escapeHtml(msg.substage.kind)}</div></td>
+                    <td style="white-space:nowrap;">${escapeHtml(whenLabel(msg))}</td>
+                    <td>
+                        <div class="msg-text">${escapeHtml(msg.content.text || '—')}</div>
+                        <div class="msg-meta">
+                            ${msg.folders_used && msg.folders_used.length ? '' + escapeHtml(msg.folders_used.join(', ')) + ' · ' : ''}
+                            ${msg.sources && msg.sources.length ? '' + escapeHtml([...new Set(msg.sources.map(s => s.source))].join(', ')) : ''}
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        function renderSchedule(schedule) {
+            const base = `/plans/${encodeURIComponent(schedule.plan_id)}/export`;
+            document.getElementById('schedule-result').innerHTML = `
+                <h2 class="section-title"><i data-lucide="calendar-check"></i> Сообщения плана</h2>
+                <div class="export-links">
+                    <a href="${base}/schedule.md" download><i data-lucide="download"></i> schedule.md</a>
+                    <a href="${base}/schedule.json" download><i data-lucide="download"></i> schedule.json</a>
+                    <a href="${base}/plan.md" download><i data-lucide="download"></i> plan.md</a>
+                    <a href="${base}/plan.json" download><i data-lucide="download"></i> plan.json</a>
+                </div>
+                <table class="schedule">
+                    <thead><tr><th>Этап</th><th>Подэтап</th><th>Дата и время</th><th>Сообщение</th></tr></thead>
+                    <tbody>${messageRows(schedule.messages)}</tbody>
+                </table>
+            `;
+            if (window.refreshIcons) refreshIcons();
+        }
+
+        // ---------------- Пользователи ----------------
+        let employeesLoaded = false;
+        let editingEmployeeId = null;
+        let employeesCache = [];
+
+        // Логин и пароль отправляются только при создании: у существующего пользователя
+        // они меняются отдельной ручкой /users/{id}/credentials
+        const PROFILE_FIELDS = ['full_name', 'position', 'department', 'contact',
+                                'mentor', 'manager', 'plan_id', 'start_date', 'status', 'notes'];
+        const CREDENTIAL_FIELDS = ['username', 'password'];
+        const EMPLOYEE_STATUS_TITLES = {
+            planned: 'Запланирован', active: 'Проходит адаптацию',
+            paused: 'Приостановлен', done: 'Завершил',
+        };
+        const ROLE_TITLES = { owner: 'Главный админ', admin: 'Администратор', employee: 'Сотрудник' };
+
+        function ensureEmployeesLoaded() {
+            if (employeesLoaded) return;
+            employeesLoaded = true;
+            api('/plans').then(r => r.json()).then(d => fillEmployeePlanSelect(d.plans || []));
+            loadEmployees();
+        }
+
+        function fillEmployeePlanSelect(plans) {
+            const select = document.getElementById('emp-plan_id');
+            const current = select.value;
+            select.innerHTML = `<option value="">— план не назначен —</option>` + plans.map(p =>
+                `<option value="${escapeHtml(p.plan_id)}">${escapeHtml(p.title)}${p.generated ? ' <i data-lucide="check"></i>' : ' (без ответов)'}</option>`
+            ).join('');
+            select.value = current;
+        }
+
+        function loadEmployees() {
             api('/users').then(r => r.json()).then(d => {
-                const rows = (d.users || []).map(u => `
-                    <tr>
-                        <td>${esc(u.full_name)}<div class="muted">${esc(u.position || '')}</div></td>
-                        <td>${esc(u.username || '—')}</td>
-                        <td>${esc(u.role)}</td>
-                        <td>
-                            <select onchange="setActive('${esc(u.id)}', this.value === 'true')">
-                                <option value="true" ${u.active ? 'selected' : ''}>активен</option>
-                                <option value="false" ${!u.active ? 'selected' : ''}>заблокирован</option>
-                            </select>
-                        </td>
-                        <td><button class="btn danger" onclick="deleteUser('${esc(u.id)}')">Удалить</button></td>
-                    </tr>`).join('');
-                document.getElementById('users-body').innerHTML = rows || '<tr><td colspan="5" class="muted">Пусто</td></tr>';
+                employeesCache = d.users || [];
+                renderEmployees(employeesCache);
+            }).catch(() => {});
+        }
+
+        function deleteNonAdmins() {
+            if (!confirm('Удалить ВСЕХ пользователей, кроме администраторов? Профили и доступы будут удалены безвозвратно.')) return;
+            if (!confirm('Точно удалить всех сотрудников? Действие необратимо.')) return;
+            apiJson('/users/delete-non-admins', { method: 'POST' }).then(({ ok, data }) => {
+                if (!ok) { alert(data.detail || 'Не удалось удалить (нужны права главного администратора).'); return; }
+                alert(`Удалено пользователей: ${data.deleted}.`);
+                loadEmployees();
+            }).catch(err => alert('Ошибка: ' + err.message));
+        }
+
+        // ---- Combobox с поиском: клик по полю -> скроллируемый список + строка поиска ----
+        function comboPositions() { return [...new Set(employeesCache.map(u => (u.position || '').trim()).filter(Boolean))].sort(); }
+        function comboUserNames() { return [...new Set(employeesCache.map(u => (u.full_name || '').trim()).filter(Boolean))].sort(); }
+
+        let comboTarget = null, comboAll = [];
+        function comboEls() {
+            let panel = document.getElementById('combo-panel');
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.className = 'combo-panel';
+                panel.id = 'combo-panel';
+                panel.innerHTML = `<input type="text" class="combo-search" id="combo-search" placeholder="Поиск…"><ul class="combo-list" id="combo-list"></ul>`;
+                document.body.appendChild(panel);
+                document.getElementById('combo-search').addEventListener('input', e => comboRender(e.target.value));
+                document.getElementById('combo-search').addEventListener('keydown', e => { if (e.key === 'Escape') comboClose(); });
+                document.addEventListener('mousedown', e => {
+                    if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== comboTarget) comboClose();
+                });
+            }
+            return panel;
+        }
+        function comboRender(query) {
+            const q = (query || '').trim().toLowerCase();
+            const items = comboAll.filter(v => v.toLowerCase().includes(q));
+            const list = document.getElementById('combo-list');
+            list.innerHTML = '';
+            if (!items.length) { list.innerHTML = '<li class="empty">ничего не найдено</li>'; return; }
+            items.forEach(v => {
+                const li = document.createElement('li');
+                li.textContent = v;
+                li.addEventListener('mousedown', e => {
+                    e.preventDefault();
+                    if (comboTarget) { comboTarget.value = v; comboTarget.dispatchEvent(new Event('input')); }
+                    comboClose();
+                });
+                list.appendChild(li);
             });
         }
-        function createUser() {
-            const full_name = document.getElementById('u-fullname').value.trim();
-            if (!full_name) return flash('Укажите ФИО', false);
-            const body = { full_name, position: document.getElementById('u-position').value,
-                username: document.getElementById('u-username').value || null, password: document.getElementById('u-password').value || null };
-            api('/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-                .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
-                    flash(ok ? 'Сотрудник создан' : (d.detail || 'Ошибка'), ok);
-                    if (ok) { ['u-fullname','u-position','u-username','u-password'].forEach(i => document.getElementById(i).value = ''); loadUsers(); }
+        function comboOpen(input, items) {
+            const panel = comboEls();
+            comboTarget = input; comboAll = items;
+            const r = input.getBoundingClientRect();
+            panel.style.left = r.left + 'px';
+            panel.style.top = (r.bottom + 4) + 'px';
+            panel.style.width = Math.max(r.width, 240) + 'px';
+            const s = document.getElementById('combo-search');
+            s.value = '';
+            comboRender('');
+            panel.classList.add('open');
+            s.focus();
+        }
+        function comboClose() { const p = document.getElementById('combo-panel'); if (p) p.classList.remove('open'); comboTarget = null; }
+
+        // Привязка полей карточки к combobox (клик открывает список всех значений с поиском).
+        (function () {
+            const binds = { 'emp-position': comboPositions, 'emp-mentor': comboUserNames, 'emp-manager': comboUserNames };
+            Object.entries(binds).forEach(([id, provider]) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('focus', () => comboOpen(el, provider()));
+                    el.addEventListener('click', () => comboOpen(el, provider()));
+                }
+            });
+        })();
+
+        function roleBadge(user) {
+            const cls = user.role === 'employee' ? 'planned' : 'active';
+            return `<span class="status-badge ${cls}">${escapeHtml(ROLE_TITLES[user.role] || user.role)}</span>`;
+        }
+
+        function userActions(user) {
+            const id = user.id;
+            const isSelf = currentUser && currentUser.id === id;
+            const buttons = [`<button class="icon-btn" onclick="showEmployeeSchedule('${id}')"><i data-lucide="calendar-days"></i> Расписание</button>`];
+
+            // Обычный администратор правит только сотрудников — админов и главного трогать нельзя
+            const manageable = isOwner || user.role === 'employee';
+            if (manageable) {
+                buttons.push(`<button class="icon-btn" onclick="editEmployee('${id}')"><i data-lucide="pencil"></i> Изменить</button>`);
+                buttons.push(`<button class="icon-btn" onclick="openCredentialsDialog('${id}')"><i data-lucide="key-round"></i> Доступ</button>`);
+                if (!isSelf) {
+                    buttons.push(user.active
+                        ? `<button class="icon-btn" onclick="setUserActive('${id}', false)"><i data-lucide="ban"></i> Заблокировать</button>`
+                        : `<button class="icon-btn" onclick="setUserActive('${id}', true)"><i data-lucide="check"></i> Подтвердить</button>`);
+                }
+            }
+
+            // Раздача прав и удаление — только у главного администратора
+            if (isOwner && !isSelf && user.role !== 'owner') {
+                buttons.push(user.role === 'admin'
+                    ? `<button class="icon-btn" onclick="setUserRole('${id}', 'employee')"><i data-lucide="arrow-down"></i> Убрать из администраторов</button>`
+                    : `<button class="icon-btn" onclick="setUserRole('${id}', 'admin')"><i data-lucide="arrow-up"></i> Назначить администратором</button>`);
+                if (user.role === 'admin') {
+                    buttons.push(`<button class="icon-btn" onclick="transferOwnership('${id}')"><i data-lucide="crown"></i> Сделать главным</button>`);
+                }
+                buttons.push(`<button class="icon-btn danger" onclick="deleteEmployee('${id}')"><i data-lucide="x"></i> Удалить</button>`);
+            }
+            return buttons.join(' ');
+        }
+
+        function renderEmployees(list) {
+            const container = document.getElementById('employee-list');
+            const pending = list.filter(u => !u.active);
+            document.getElementById('pending-block').innerHTML = pending.length
+                ? `<div class="warn"><i data-lucide="clock"></i> Ждут подтверждения: ${pending.map(u => escapeHtml(u.full_name)).join(', ')}.
+                   Пока учётная запись не подтверждена, войти в систему нельзя.</div>`
+                : '';
+
+            if (!list.length) {
+                container.innerHTML = `<div class="empty-hint">Пользователей пока нет — заведите первого в форме выше.</div>`;
+                return;
+            }
+            container.innerHTML = `
+                <table class="schedule">
+                    <thead><tr>
+                        <th>Пользователь</th><th>Роль</th><th>План адаптации</th>
+                        <th>Дата выхода</th><th>Статус</th><th>Действия</th>
+                    </tr></thead>
+                    <tbody>${list.map(e => `
+                        <tr${e.active ? '' : ' style="background:#fffbeb;"'}>
+                            <td>
+                                <strong>${escapeHtml(e.full_name)}</strong>
+                                <div class="msg-meta">${e.username
+                                    ? '@' + escapeHtml(e.username)
+                                    : '<span style="color:#b45309;">нет логина — войти не может</span>'}
+                                    ${e.must_change_credentials ? ' · сменит пароль при входе' : ''}</div>
+                                <div class="msg-meta">${escapeHtml([e.position, e.department].filter(Boolean).join(' · ') || '—')}</div>
+                                ${e.active ? '' : '<div class="msg-meta" style="color:#b45309;">не подтверждён</div>'}
+                            </td>
+                            <td>${roleBadge(e)}</td>
+                            <td>
+                                ${e.plan_title ? escapeHtml(e.plan_title) : '<span style="color:#dc2626;">не назначен</span>'}
+                                ${e.plan_title && !e.plan_generated ? '<div class="msg-meta" style="color:#b45309;">ответы не сгенерированы</div>' : ''}
+                            </td>
+                            <td style="white-space:nowrap;">${escapeHtml(e.start_date || '—')}</td>
+                            <td><span class="status-badge ${e.status}">${escapeHtml(EMPLOYEE_STATUS_TITLES[e.status] || e.status)}</span></td>
+                            <td>${userActions(e)}</td>
+                        </tr>
+                    `).join('')}</tbody>
+                </table>
+            `;
+        }
+
+        function employeePayload(includeCredentials) {
+            const payload = {};
+            PROFILE_FIELDS.forEach(field => {
+                payload[field] = document.getElementById(`emp-${field}`).value || null;
+            });
+            if (includeCredentials) {
+                CREDENTIAL_FIELDS.forEach(field => {
+                    payload[field] = document.getElementById(`emp-${field}`).value || null;
+                });
+            }
+            return payload;
+        }
+
+        function resetEmployeeForm() {
+            editingEmployeeId = null;
+            PROFILE_FIELDS.concat(CREDENTIAL_FIELDS).forEach(field => {
+                const el = document.getElementById(`emp-${field}`);
+                el.value = field === 'status' ? 'planned' : '';
+                el.disabled = false;
+            });
+            document.getElementById('employee-form-title').textContent = 'Новый сотрудник';
+            document.getElementById('employee-status').textContent = '';
+        }
+
+        function editEmployee(id) {
+            const employee = employeesCache.find(e => e.id === id);
+            if (!employee) return;
+            editingEmployeeId = id;
+            PROFILE_FIELDS.forEach(field => {
+                document.getElementById(`emp-${field}`).value = employee[field] || (field === 'status' ? 'planned' : '');
+            });
+            // Логин и пароль существующего пользователя меняются кнопкой «Доступ»
+            CREDENTIAL_FIELDS.forEach(field => {
+                const el = document.getElementById(`emp-${field}`);
+                el.value = field === 'username' ? (employee.username || '') : '';
+                el.disabled = true;
+            });
+            document.getElementById('employee-form-title').textContent = `Редактирование: ${employee.full_name}`;
+            document.getElementById('employee-status').textContent = '';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function saveEmployee() {
+            const isUpdate = Boolean(editingEmployeeId);
+            const payload = employeePayload(!isUpdate);
+            if (!payload.full_name) {
+                document.getElementById('employee-status').textContent = 'Укажите ФИО';
+                return;
+            }
+            const url = isUpdate ? `/users/${encodeURIComponent(editingEmployeeId)}` : '/users';
+            apiJson(url, {
+                method: isUpdate ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            }).then(({ ok, data }) => {
+                if (!ok) {
+                    document.getElementById('employee-status').textContent = `${data.detail || 'Не удалось сохранить'}`;
+                    return;
+                }
+                document.getElementById('employee-status').textContent = `Сохранён: ${data.full_name}`;
+                resetEmployeeForm();
+                loadEmployees();
+            });
+        }
+
+        function deleteEmployee(id) {
+            const employee = employeesCache.find(e => e.id === id);
+            if (!confirm(`Удалить пользователя «${employee ? employee.full_name : id}»? Действие необратимо.`)) return;
+            apiJson(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(({ ok, data }) => {
+                if (!ok) { alert(data.detail || 'Не удалось удалить'); return; }
+                if (editingEmployeeId === id) resetEmployeeForm();
+                document.getElementById('employee-schedule').innerHTML = '';
+                loadEmployees();
+            });
+        }
+
+        function setUserActive(id, active) {
+            apiJson(`/users/${encodeURIComponent(id)}/active`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ active }),
+            }).then(({ ok, data }) => {
+                if (!ok) { alert(data.detail || 'Не удалось изменить'); return; }
+                loadEmployees();
+            });
+        }
+
+        function setUserRole(id, role) {
+            const employee = employeesCache.find(e => e.id === id);
+            const question = role === 'admin'
+                ? `Назначить «${employee.full_name}» администратором? Он получит доступ к базе знаний, конструктору планов и заведению сотрудников.`
+                : `Убрать «${employee.full_name}» из администраторов?`;
+            if (!confirm(question)) return;
+            apiJson(`/users/${encodeURIComponent(id)}/role`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ role }),
+            }).then(({ ok, data }) => {
+                if (!ok) { alert(data.detail || 'Не удалось изменить роль'); return; }
+                loadEmployees();
+            });
+        }
+
+        function transferOwnership(id) {
+            const employee = employeesCache.find(e => e.id === id);
+            if (!confirm(`Передать права главного администратора пользователю «${employee.full_name}»?\n\n`
+                       + `Вы станете обычным администратором и потеряете право удалять пользователей `
+                       + `и раздавать права. Обе учётные записи будут разлогинены.`)) return;
+            apiJson(`/users/${encodeURIComponent(id)}/transfer-ownership`, { method: 'POST' })
+                .then(({ ok, data }) => {
+                    if (!ok) { alert(data.detail || 'Не удалось передать права'); return; }
+                    alert('Права переданы. Войдите заново.');
+                    window.location.href = '/login';
                 });
         }
-        function setActive(id, active) { api(`/users/${id}/active`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) }).then(() => flash('Обновлено', true)); }
-        function deleteUser(id) { if (!confirm('Удалить пользователя?')) return; api(`/users/${id}`, { method: 'DELETE' }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => { flash(ok ? 'Удалён' : (d.detail || 'Ошибка'), ok); loadUsers(); }); }
 
-        // ---- Вопросы ----
-        function loadQuestions() {
-            api('/questions?status=open').then(r => r.json()).then(d => {
-                document.getElementById('q-count').textContent = d.open_count ? `(${d.open_count})` : '';
-                const items = d.questions || [];
-                if (!items.length) { document.getElementById('questions-body').innerHTML = '<div class="muted">Открытых вопросов нет</div>'; return; }
-                document.getElementById('questions-body').innerHTML = items.map(q => `
-                    <div class="card" style="box-shadow:none;border:1px solid #e2e8f0;">
-                        <strong>${esc(q.question)}</strong>
-                        <div class="muted">${esc(q.user_name || '')} · ${esc(q.created_at || '')} · ${esc(q.reason || '')}</div>
-                        <textarea id="ans-${esc(q.id)}" rows="2" placeholder="Ответ сотруднику…"></textarea>
-                        <button class="primary btn" onclick="resolveQ('${esc(q.id)}')">Ответить</button>
-                    </div>`).join('');
+        function openCredentialsDialog(id) {
+            const employee = employeesCache.find(e => e.id === id);
+            document.getElementById('cred-user-id').value = id;
+            document.getElementById('cred-username').value = employee.username || '';
+            document.getElementById('cred-password').value = '';
+            document.getElementById('cred-title').textContent = `Доступ: ${employee.full_name}`;
+            document.getElementById('cred-error').style.display = 'none';
+            document.getElementById('credentials-dialog').showModal();
+        }
+
+        function submitCredentials() {
+            const id = document.getElementById('cred-user-id').value;
+            const errorBox = document.getElementById('cred-error');
+            const username = document.getElementById('cred-username').value.trim();
+            const password = document.getElementById('cred-password').value;
+            if (!username && !password) {
+                errorBox.textContent = 'Укажите логин или пароль';
+                errorBox.style.display = 'block';
+                return;
+            }
+            apiJson(`/users/${encodeURIComponent(id)}/credentials`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username || null, password: password || null }),
+            }).then(({ ok, data }) => {
+                if (!ok) {
+                    errorBox.textContent = data.detail || 'Не удалось сохранить';
+                    errorBox.style.display = 'block';
+                    return;
+                }
+                document.getElementById('credentials-dialog').close();
+                loadEmployees();
             });
         }
-        function resolveQ(id) {
-            const answer = document.getElementById('ans-' + id).value.trim();
-            if (!answer) return flash('Введите ответ', false);
-            api(`/questions/${id}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answer }) })
-                .then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => { flash(ok ? 'Ответ отправлен' : (d.detail || 'Ошибка'), ok); loadQuestions(); });
+
+        function showEmployeeSchedule(id) {
+            const container = document.getElementById('employee-schedule');
+            container.innerHTML = `<div class="empty-hint">Считаем расписание...</div>`;
+            apiJson(`/users/${encodeURIComponent(id)}/schedule`).then(({ ok, data }) => {
+                if (!ok) {
+                    container.innerHTML = `<div class="warn"><i data-lucide="triangle-alert"></i> ${escapeHtml(data.detail)}</div>`;
+                    return;
+                }
+                const base = `/users/${encodeURIComponent(id)}/export`;
+                const notGenerated = !data.plan_generated
+                    ? `<div class="warn"><i data-lucide="triangle-alert"></i> У плана «${escapeHtml(data.plan_title)}» ещё не сгенерированы ответы.
+                       Даты рассчитаны, тексты пустые — запустите генерацию на вкладке «Конструктор плана».</div>` : '';
+                container.innerHTML = `
+                    <h2 class="section-title"><i data-lucide="calendar-days"></i> Расписание: ${escapeHtml(data.employee.full_name)}</h2>
+                    <div class="stage-hint">
+                        План «${escapeHtml(data.plan_title)}» · дата выхода ${escapeHtml(data.start_date)} ·
+                        сообщений: ${(data.messages || []).length}
+                    </div>
+                    ${notGenerated}
+                    <div class="export-links">
+                        <a href="${base}/schedule.md" download><i data-lucide="download"></i> schedule.md</a>
+                        <a href="${base}/schedule.json" download><i data-lucide="download"></i> schedule.json</a>
+                    </div>
+                    <table class="schedule">
+                        <thead><tr><th>Этап</th><th>Подэтап</th><th>Дата и время</th><th>Сообщение</th></tr></thead>
+                        <tbody>${messageRows(data.messages, false)}</tbody>
+                    </table>
+                `;
+                container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
         }
 
-        loadDocs(); loadFolders(); loadUsers(); loadQuestions();
-        setInterval(() => { if (document.getElementById('docs').classList.contains('active')) loadDocs(); }, 8000);
+        // ==================== Вопросы без ответа ====================
+        function reasonLabel(r) {
+            return r === 'escalate'
+                ? '<span class="badge escalate"><i data-lucide="triangle-alert"></i> ЧС</span>'
+                : '<span class="badge"><i data-lucide="search-x"></i> нет ответа</span>';
+        }
+
+        function updateQuestionsBadge(count) {
+            const badge = document.getElementById('questions-badge');
+            if (count > 0) { badge.textContent = count; badge.style.display = 'inline-block'; }
+            else { badge.style.display = 'none'; }
+        }
+
+        function loadQuestions() {
+            const showAll = document.getElementById('questions-show-all').checked;
+            const url = showAll ? '/questions?status=' : '/questions?status=open';
+            api(url).then(r => r.json()).then(d => {
+                updateQuestionsBadge(d.open_count || 0);
+                renderQuestions(d.questions || []);
+            }).catch(() => {});
+        }
+
+        function refreshQuestionsBadge() {
+            api('/questions?status=open').then(r => r.json())
+                .then(d => updateQuestionsBadge(d.open_count || 0)).catch(() => {});
+        }
+
+        function renderQuestions(items) {
+            const box = document.getElementById('questions-list');
+            if (!items.length) {
+                box.innerHTML = '<div class="empty-hint">Открытых вопросов нет <i data-lucide="party-popper"></i></div>';
+                return;
+            }
+            box.innerHTML = items.map(q => {
+                const who = [escapeHtml(q.user_name), escapeHtml(q.position)].filter(Boolean).join(', ');
+                const contact = q.contact ? ` · ${escapeHtml(q.contact)}` : '';
+                const resolved = q.resolved_question && q.resolved_question !== q.question
+                    ? `<div class="context-note"><i data-lucide="link-2"></i> Понято как: «${escapeHtml(q.resolved_question)}»</div>` : '';
+                if (q.status === 'resolved') {
+                    return `<div class="card" style="opacity:.75;">
+                        <div>${reasonLabel(q.reason)} <small style="color:#94a3b8;">${escapeHtml(q.created_at)}</small></div>
+                        <div style="margin:6px 0;"><strong><i data-lucide="help-circle"></i> ${escapeHtml(q.question)}</strong> — ${who}${contact}</div>
+                        <div class="answer"><i data-lucide="check"></i> ${escapeHtml(q.answer)}</div>
+                        <small style="color:#94a3b8;">Ответил: ${escapeHtml(q.answered_by || '')} · ${escapeHtml(q.answered_at || '')}</small>
+                    </div>`;
+                }
+                return `<div class="card">
+                    <div>${reasonLabel(q.reason)} <small style="color:#94a3b8;">${escapeHtml(q.created_at)}</small></div>
+                    <div style="margin:6px 0;"><strong><i data-lucide="help-circle"></i> ${escapeHtml(q.question)}</strong></div>
+                    <div style="font-size:13px;color:#475569;">От: ${who}${contact}${q.mentor ? ' · наставник: ' + escapeHtml(q.mentor) : ''}</div>
+                    ${resolved}
+                    <textarea id="ans-${q.id}" rows="3" style="width:100%;margin-top:8px;" placeholder="Ответ сотруднику (можно после консультации со специалистом)"></textarea>
+                    <button class="primary-btn" style="margin-top:6px;" onclick="resolveQuestion('${q.id}')"><i data-lucide="send-horizontal"></i> Отправить ответ</button>
+                </div>`;
+            }).join('');
+            refreshIcons();
+        }
+
+        function resolveQuestion(qid) {
+            const answer = (document.getElementById('ans-' + qid).value || '').trim();
+            if (!answer) { alert('Введите ответ'); return; }
+            apiJson(`/questions/${encodeURIComponent(qid)}/resolve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ answer }),
+            }).then(({ ok, data }) => {
+                if (!ok) { alert(data.detail || 'Не удалось сохранить ответ'); return; }
+                loadQuestions();
+            });
+        }
+
+        refreshQuestionsBadge();
+    </script>
+
+    <!-- Векторные иконки Lucide. refreshIcons() зовётся после AJAX-рендеров списков,
+         чтобы иконки в динамически вставленном HTML тоже отрисовывались. -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+        let _iconObserver = null;
+        function refreshIcons() {
+            if (!window.lucide) return;
+            if (_iconObserver) _iconObserver.disconnect();   // не ловим свои же вставки svg
+            lucide.createIcons({ attrs: { 'stroke-width': 1.5, width: 18, height: 18 } });
+            if (_iconObserver) _iconObserver.observe(document.body, { childList: true, subtree: true });
+        }
+        window.addEventListener('load', () => {
+            _iconObserver = new MutationObserver(() => refreshIcons());
+            refreshIcons();   // отрисовать иконки в текущем и во всём динамически вставляемом HTML
+        });
     </script>
 </body>
 </html>

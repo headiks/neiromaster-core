@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Реестр документов — НейроМастер</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#eef1f6;--surface:#fff;--surface-2:#f6f8fb;--ink:#15202e;--muted:#586475;--faint:#8b94a3;
+  --line:#e3e7ef;--line-2:#d2d9e4;--accent:#2f5fe0;--accent-soft:#e9f0fe;--accent-ink:#1e46bd;
+  --ok:#16794a;--ok-soft:#e2f2ea;--warn:#9a6a10;--warn-soft:#f7eed9;--err:#c0392b;--err-soft:#f8e6e3;
+  --shadow-sm:0 1px 2px rgba(21,32,46,.05);--shadow:0 8px 30px rgba(21,32,46,.12);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0c1119;--surface:#151d29;--surface-2:#111825;--ink:#e7ecf4;--muted:#9aa5b4;--faint:#697484;
+  --line:#232f40;--line-2:#2f3d52;--accent:#6f97f5;--accent-soft:#182640;--accent-ink:#9db8fa;
+  --ok:#57c489;--ok-soft:#123023;--warn:#d6a955;--warn-soft:#2c2410;--err:#e5675d;--err-soft:#331d1a;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);--shadow:0 16px 44px rgba(0,0,0,.55);
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.5}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+.shell{max-width:1320px;margin:0 auto;padding:26px 20px 80px}
+.top{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:flex-end;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:11px}
+.logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#7c3aed);display:grid;place-items:center;color:#fff;font-size:18px}
+h1{font-size:1.28rem;font-weight:800;margin:0}
+.sub{color:var(--muted);font-size:.84rem;margin:1px 0 0}
+.actions{display:flex;gap:8px}
+.btn{border:1px solid var(--line-2);background:var(--surface);border-radius:9px;padding:8px 13px;font:inherit;font-size:.82rem;font-weight:600;color:var(--muted);cursor:pointer;text-decoration:none}
+.btn:hover{color:var(--ink)}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:18px 0 14px}
+.search{flex:1;min-width:200px;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:9px 13px;color:var(--faint)}
+.search input{border:0;background:none;outline:none;font:inherit;color:var(--ink);width:100%}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line-2);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:.78rem;font-weight:600;color:var(--muted);cursor:pointer}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.count{color:var(--muted);font-size:.82rem;margin-left:auto}
+.wrap{overflow-x:auto;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-sm);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:1040px;font-size:.83rem}
+th,td{text-align:left;padding:11px 13px;border-top:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+thead th{position:sticky;top:0;background:var(--surface-2);font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;border-top:0;cursor:pointer;user-select:none}
+thead th .ar{opacity:.5;font-size:.7em}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--surface-2)}
+td.nm{font-weight:600;white-space:normal;max-width:280px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;padding:.2em .55em;border-radius:6px}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.indexed{background:var(--ok-soft);color:var(--ok)}
+.pill.processing,.pill.reanalyzing,.pill.queued{background:var(--warn-soft);color:var(--warn)}
+.pill.error{background:var(--err-soft);color:var(--err)}
+.tags{display:flex;gap:4px;flex-wrap:wrap;max-width:220px;white-space:normal}
+.tag{font-size:.68rem;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:.08em .4em}
+.dash{color:var(--faint)}
+.msg{padding:44px 0;text-align:center;color:var(--muted)}
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(10,16,25,.5);opacity:0;pointer-events:none;transition:.2s;z-index:40}
+.scrim.open{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(430px,94vw);background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--shadow);transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1);z-index:41;display:flex;flex-direction:column}
+.drawer.open{transform:none}
+.dh{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:flex-start}
+.dh .x{margin-left:auto;border:0;background:var(--surface-2);color:var(--muted);width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:15px}
+.db{padding:4px 20px 22px;overflow:auto}
+.rl{font-size:.66rem;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);font-weight:700;margin:15px 0 4px}
+.kv{font-size:.86rem}.kv.mono{word-break:break-all;color:var(--muted)}
+.dactions{display:flex;gap:8px;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.act{flex:1;border:1px solid var(--line-2);background:var(--surface-2);border-radius:9px;padding:10px;font:inherit;font-size:.82rem;font-weight:700;cursor:pointer;color:var(--ink)}
+.act.re:hover{border-color:var(--accent);color:var(--accent)}
+.act.del{color:var(--err)}.act.del:hover{border-color:var(--err);background:var(--err-soft)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:10px;font-size:.85rem;font-weight:600;opacity:0;transition:.2s;z-index:50}
+.toast.show{opacity:1}
+.foot{margin-top:20px;color:var(--faint);font-size:.76rem;text-align:center}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand"><div class="logo">🧠</div>
+      <div><h1>Реестр обработанных документов</h1>
+        <p class="sub">Метаданные из таблицы <span class="mono">documents</span> (PostgreSQL)</p></div></div>
+    <div class="actions">
+      <a class="btn" href="/documents-board">Экран «этапы ↔ документы»</a>
+      <a class="btn" href="/admin">← В админку</a>
+      <button class="btn" id="reload">Обновить</button>
+    </div>
+  </div>
+
+  <div class="bar">
+    <label class="search">🔍 <input id="q" placeholder="Поиск по имени файла или ключевым словам…"></label>
+    <div class="filters" id="filters"></div>
+    <span class="count" id="count"></span>
+  </div>
+
+  <div class="wrap"><table>
+    <thead><tr id="head"></tr></thead>
+    <tbody id="rows"><tr><td class="msg">Загрузка…</td></tr></tbody>
+  </table></div>
+  <div class="foot">Источник данных — реестр метаданных PostgreSQL. Клик по строке — полный «паспорт» файла.</div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-hidden="true"></aside>
+<div class="toast" id="toast"></div>
+
+<script>
+var COLS=[
+  {k:'filename',t:'Файл',cls:'nm'},
+  {k:'mime',t:'Тип',fmt:function(v){return v?v.toUpperCase():'—';}},
+  {k:'size_bytes',t:'Размер',fmt:fmtSize},
+  {k:'status',t:'Статус',fmt:statusPill,raw:true},
+  {k:'uploaded_at',t:'Загружен',fmt:function(v){return v?String(v).replace('T',' ').slice(0,16):'—';}},
+  {k:'folders',t:'Папки',fmt:tags,raw:true},
+  {k:'stage_ids',t:'Этапы',fmt:function(v){return (v&&v.length)?v.length:'<span class="dash">0</span>';},raw:true},
+  {k:'substages',t:'Подэтапы',fmt:function(v){return (v&&v.length)?v.length:'<span class="dash">0</span>';},raw:true},
+  {k:'keywords',t:'Ключевые слова',fmt:tags,raw:true},
+  {k:'embedding_dim',t:'Вектор',fmt:function(v){return v?(v+'D'):'<span class="dash">—</span>';},raw:true},
+];
+var DATA=[],view=[],sortK='uploaded_at',sortDir=-1,statusFilter='',search='';
+
+function esc(s){var d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+function fmtSize(v){if(!v)return '—';if(v<1024)return v+' Б';if(v<1048576)return (v/1024).toFixed(1)+' КБ';return (v/1048576).toFixed(1)+' МБ';}
+function statusPill(v){var s=esc(v||'—');return '<span class="pill '+esc(v||'')+'">'+s+'</span>';}
+function tags(v){if(!v||!v.length)return '<span class="dash">—</span>';return '<div class="tags">'+v.slice(0,4).map(function(x){return '<span class="tag">'+esc(x)+'</span>';}).join('')+(v.length>4?'<span class="tag">+'+(v.length-4)+'</span>':'')+'</div>';}
+
+function renderHead(){
+  document.getElementById('head').innerHTML=COLS.map(function(c){
+    var ar=sortK===c.k?(sortDir>0?'▲':'▼'):'';
+    return '<th data-k="'+c.k+'">'+esc(c.t)+' <span class="ar">'+ar+'</span></th>';
+  }).join('')+'<th></th>';
+  document.querySelectorAll('#head th[data-k]').forEach(function(th){
+    th.onclick=function(){var k=th.dataset.k;if(sortK===k)sortDir=-sortDir;else{sortK=k;sortDir=1;}apply();};
+  });
+}
+function cell(c,row){var v=row[c.k];if(c.fmt)return c.raw?c.fmt(v):esc(c.fmt(v));return v==null||v===''?'<span class="dash">—</span>':esc(v);}
+function renderRows(){
+  var tb=document.getElementById('rows');
+  if(!view.length){tb.innerHTML='<tr><td class="msg" colspan="'+(COLS.length+1)+'">Ничего не найдено</td></tr>';return;}
+  tb.innerHTML=view.map(function(row,i){
+    return '<tr data-i="'+i+'">'+COLS.map(function(c){return '<td>'+cell(c,row)+'</td>';}).join('')+
+           '<td><span class="dash">›</span></td></tr>';
+  }).join('');
+  tb.querySelectorAll('tr[data-i]').forEach(function(tr){tr.onclick=function(){openDrawer(view[tr.dataset.i]);};});
+  document.getElementById('count').textContent=view.length+' из '+DATA.length;
+}
+function apply(){
+  var q=search.toLowerCase();
+  view=DATA.filter(function(r){
+    if(statusFilter&&r.status!==statusFilter)return false;
+    if(!q)return true;
+    var hay=(r.filename||'')+' '+((r.keywords||[]).join(' '));
+    return hay.toLowerCase().indexOf(q)>=0;
+  });
+  view.sort(function(a,b){
+    var x=a[sortK],y=b[sortK];
+    if(Array.isArray(x))x=x.length; if(Array.isArray(y))y=y.length;
+    if(x==null)return 1; if(y==null)return -1;
+    return (x>y?1:x<y?-1:0)*sortDir;
+  });
+  renderHead();renderRows();
+}
+function renderFilters(){
+  var counts={};DATA.forEach(function(r){counts[r.status]=(counts[r.status]||0)+1;});
+  var chips='<button class="chip'+(statusFilter===''?' on':'')+'" data-s="">Все</button>';
+  Object.keys(counts).forEach(function(s){
+    chips+='<button class="chip'+(statusFilter===s?' on':'')+'" data-s="'+esc(s)+'">'+esc(s)+' ('+counts[s]+')</button>';
+  });
+  var f=document.getElementById('filters');f.innerHTML=chips;
+  f.querySelectorAll('.chip').forEach(function(c){c.onclick=function(){statusFilter=c.dataset.s;apply();renderFilters();};});
+}
+
+function openDrawer(r){
+  var subs=(r.substages||[]).map(function(s){return '<span class="tag">'+esc(s.substage_id)+' · '+Number(s.score||0).toFixed(2)+'</span>';}).join(' ')||'<span class="dash">—</span>';
+  var kw=(r.keywords||[]).map(function(k){return '<span class="tag">'+esc(k)+'</span>';}).join(' ')||'<span class="dash">—</span>';
+  var fl=(r.folders||[]).map(function(k){return '<span class="tag">'+esc(k)+'</span>';}).join(' ')||'<span class="dash">—</span>';
+  document.getElementById('drawer').innerHTML=
+    '<div class="dh"><div><div style="font-weight:700">'+esc(r.filename)+'</div>'+
+      '<div class="mono" style="font-size:.74rem;color:var(--muted)">'+esc((r.mime||'').toUpperCase())+' · '+fmtSize(r.size_bytes)+'</div></div>'+
+      '<button class="x" onclick="closeDrawer()">✕</button></div>'+
+    '<div class="db">'+
+      '<div class="rl">Статус</div>'+statusPill(r.status)+
+      '<div class="rl">sha256 (ключ дедупликации)</div><div class="kv mono">'+esc(r.sha256)+'</div>'+
+      '<div class="rl">Загружен</div><div class="kv">'+esc((r.uploaded_at||'—').replace('T',' '))+(r.uploaded_by?' · '+esc(r.uploaded_by):'')+'</div>'+
+      '<div class="rl">Краткое описание</div><div class="kv">'+esc(r.summary||'—')+'</div>'+
+      '<div class="rl">Смысловые папки</div><div>'+fl+'</div>'+
+      '<div class="rl">Этапы</div><div class="kv mono">'+((r.stage_ids||[]).join(', ')||'—')+'</div>'+
+      '<div class="rl">Подэтапы (score)</div><div>'+subs+'</div>'+
+      '<div class="rl">Ключевые слова</div><div>'+kw+'</div>'+
+      '<div class="rl">Эмбеддинг-вектор</div><div class="kv">'+(r.embedding_dim?(r.embedding_dim+' измерений'):'—')+'</div>'+
+      '<div class="dactions">'+
+        '<button class="act re" onclick="reindex(\''+encodeURIComponent(r.filename)+'\')">↻ Переиндексировать</button>'+
+        '<button class="act del" onclick="del(\''+encodeURIComponent(r.filename)+'\')">🗑 Удалить</button>'+
+      '</div></div>';
+  document.getElementById('drawer').classList.add('open');
+  document.getElementById('scrim').classList.add('open');
+}
+function closeDrawer(){document.getElementById('drawer').classList.remove('open');document.getElementById('scrim').classList.remove('open');}
+function toast(t){var el=document.getElementById('toast');el.textContent=t;el.classList.add('show');setTimeout(function(){el.classList.remove('show');},2600);}
+
+function del(fn){
+  if(!confirm('Удалить документ «'+decodeURIComponent(fn)+'» из базы знаний? Это уберёт его чанки, оригинал и метаданные.'))return;
+  fetch('/documents/'+fn,{method:'DELETE',credentials:'same-origin'}).then(function(r){
+    if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
+  }).then(function(){toast('Удалено');closeDrawer();load();}).catch(function(e){toast('Ошибка: '+e.message);});
+}
+function reindex(fn){
+  toast('Переиндексация…');
+  fetch('/documents/'+fn+'/reindex',{method:'POST',credentials:'same-origin'}).then(function(r){
+    if(!r.ok)return r.json().then(function(d){throw new Error(d.detail||('HTTP '+r.status));});return r.json();
+  }).then(function(){toast('Переиндексировано');closeDrawer();load();}).catch(function(e){toast('Ошибка: '+e.message);});
+}
+
+function load(){
+  fetch('/documents/table',{credentials:'same-origin'}).then(function(r){
+    if(r.status===401){location.href='/login';return null;}
+    if(!r.ok)throw new Error('HTTP '+r.status);return r.json();
+  }).then(function(d){if(!d)return;DATA=d.documents||[];renderFilters();apply();
+    if(!DATA.length)document.getElementById('rows').innerHTML='<tr><td class="msg" colspan="'+(COLS.length+1)+'">В реестре пока нет документов</td></tr>';
+  }).catch(function(e){document.getElementById('rows').innerHTML='<tr><td class="msg" colspan="'+(COLS.length+1)+'">Не удалось загрузить: '+esc(e.message)+'</td></tr>';});
+}
+document.getElementById('q').addEventListener('input',function(e){search=e.target.value;apply();});
+document.getElementById('reload').addEventListener('click',load);
+document.getElementById('scrim').addEventListener('click',closeDrawer);
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeDrawer();});
+renderHead();load();
+</script>
+</body>
+</html>
