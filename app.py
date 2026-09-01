@@ -578,6 +578,16 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
     job = indexing.enqueue_document(filepath)
+
+    # Точная разметка docpipe (двухпроходная LLM: карточка документа -> метки секций
+    # по этапам/подэтапам/профессиям). Идёт параллельно фолдер-индексации для RAG.
+    # Сбой разметки не должен блокировать загрузку/RAG.
+    try:
+        import docpipe
+        job["label_job_id"] = docpipe.enqueue(filepath, file.filename)
+    except Exception as e:
+        print(f"[DOCPIPE] не удалось поставить разметку в очередь: {e}")
+        job["label_job_id"] = None
     return JSONResponse(status_code=202, content=job)
 
 
@@ -629,6 +639,28 @@ async def get_document_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     return job
+
+
+@app.get("/documents/label-jobs/{job_id}", dependencies=admin_only)
+async def get_label_job(job_id: str):
+    """Статус фоновой LLM-разметки docpipe (проход по секциям, возобновляемый)."""
+    import docpipe
+    job = docpipe.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача разметки не найдена")
+    return dict(job)
+
+
+@app.get("/documents/{filename}/labels", dependencies=admin_only)
+async def get_document_labels(filename: str):
+    """Точные метки документа (docpipe): по секциям — какие этапы/подэтапы/профессии и почему.
+    Это источник правды по разметке (LLM, temp=0), в отличие от косинусной прикидки."""
+    import docpipe.store as dstore
+    doc = dstore.find_by_filename(filename)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Документ не размечен docpipe (загрузите заново или дождитесь разметки)")
+    rows = dstore.sections_with_labels(doc["id"])
+    return {"filename": filename, "doc_card": doc.get("doc_card") or {}, "sections": [dict(r) for r in rows]}
 
 
 @app.get("/documents/{filename}/chunks", dependencies=admin_only)

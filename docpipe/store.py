@@ -158,5 +158,23 @@ def get_job(job_id: str):
     return db.query("SELECT * FROM label_jobs WHERE id = %s", (job_id,), fetch="one")
 
 
+# ---------- Просмотр точных меток документа (для UI/проверки) ----------
+def find_by_filename(filename: str):
+    return db.query("SELECT id, filename, doc_card FROM documents WHERE filename = %s LIMIT 1",
+                    (filename,), fetch="one")
+
+
+def sections_with_labels(doc_id: str) -> list:
+    """Секции документа с их LLM-метками (этапы/подэтапы/профессии/обоснование)."""
+    return db.query(
+        "SELECT s.seq, s.heading_path, s.page_from, s.text, "
+        "       l.is_meaningful, l.substages, l.stages, l.professions, l.is_general, "
+        "       l.prof_conf, l.why, l.source "
+        "FROM sections s LEFT JOIN section_labels l ON l.section_id = s.id "
+        "WHERE s.doc_id = %s ORDER BY s.seq",
+        (doc_id,),
+    )
+
+
 def pending_jobs() -> list:
     return db.query("SELECT * FROM label_jobs WHERE status IN ('queued','running','error') ORDER BY updated_at")
