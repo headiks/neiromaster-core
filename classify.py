@@ -49,6 +49,13 @@ DOC_MATCH_THRESHOLD = 0.30    # кандидат-папка для докуме�
 CHUNK_MATCH_THRESHOLD = 0.45  # кандидат-папка для чанка по вектору (дальше подтверждает LLM)
 SIMILAR_DOC_THRESHOLD = 0.80  # порог «похожий/связанный документ» при загрузке
 
+# Гибрид классификации документа (ТЗ 1.4): воронка «детерминированный код -> нейронка-арбитр».
+# Уровень B решает по МАРЖЕ между top-1 и top-2 (а не по абсолютному порогу): уверенная папка
+# — та, что заметно оторвалась от следующей. Пороги — стартовые, калибруются на golden-set
+# (переопределяются переменными окружения).
+B_FLOOR = float(os.environ.get("NEIROMASTER_DOC_B_FLOOR", "0.40"))    # ниже — в серую зону к LLM
+B_MARGIN = float(os.environ.get("NEIROMASTER_DOC_B_MARGIN", "0.08"))  # отрыв top-1 от top-2 -> уверенно
+
 # Подтверждать принадлежность чанка папке большой моделью (не только эмбеддингом).
 # Точнее разделяет темы, но добавляет по LLM-вызову на чанк с кандидатами. Отключаемо
 # на очень большом корпусе: NEIROMASTER_CHUNK_LLM=0.
@@ -236,12 +243,13 @@ def is_meaningful(text: str) -> bool:
     return True
 
 
-# ---------- Классификация документа (кандидаты по вектору + уточнение LLM) ----------
+# ---------- Классификация документа: гибрид A(правила)/B(маржа)/C(LLM-арбитр), ТЗ 1.4 ----------
 SELECT_SYSTEM = """Ты относишь документ к смысловым папкам базы знаний. Тебе дают краткое
 описание документа и список папок-КАНДИДАТОВ с их критериями. Верни ТОЛЬКО те папки,
-к которым документ действительно относится по смыслу критериев. Документ может
-относиться сразу к нескольким папкам. Если ни одна не подходит — верни пустой список.
-Ответ — СТРОГО JSON: {"folders": ["slug", ...]}. Без пояснений."""
+к которым документ действительно относится по смыслу критериев, и для каждой — короткое
+обоснование (какой критерий сработал). Документ может относиться к нескольким папкам.
+Если ни одна не подходит — верни пустой список.
+Ответ — СТРОГО JSON: {"folders": [{"slug": "...", "reason": "..."}]}. Без пояснений."""
 
 
 def _parse_json(text: str) -> dict:
@@ -252,42 +260,107 @@ def _parse_json(text: str) -> dict:
     return json.loads(text[a:b + 1])
 
 
-def classify_document(summary: str) -> dict:
-    """Возвращает {"folders": [slug], "stage_ids": [id], "candidates": [{slug,name,score}]}.
-    Пустой folders — документ уходит только в общую базу «Все документы»."""
-    candidates = match_folders(summary, top_k=6, threshold=DOC_MATCH_THRESHOLD)
-    cand_index = {c[0]: c for c in candidates}
-    if not candidates:
-        return {"folders": [], "stage_ids": [], "candidates": []}
+def _rule_hits(text: str, by_slug: dict) -> dict:
+    """Уровень A: детерминированные сигнатуры из criteria папок. Критерий с префиксом
+    're:' трактуется как регэксп, иначе — как фраза/слово по границе слова. Возвращает
+    {slug: сработавший_критерий}. Явное попадание = стопроцентно воспроизводимо, без нейронки."""
+    hits = {}
+    tl = (text or "").lower()
+    if not tl.strip():
+        return hits
+    for slug, f in by_slug.items():
+        for crit in f.get("criteria") or []:
+            c = (crit or "").strip()
+            if not c:
+                continue
+            if c.lower().startswith("re:"):
+                try:
+                    if re.search(c[3:], text or "", re.IGNORECASE):
+                        hits[slug] = crit
+                        break
+                except re.error:
+                    continue
+            elif re.search(r"(?<!\w)" + re.escape(c.lower()) + r"(?!\w)", tl):
+                hits[slug] = crit
+                break
+    return hits
 
-    # Уточняем выбор LLM среди кандидатов (она видит критерии).
-    by_slug = {f["slug"]: f for f in folders.list_folders(include_disabled=False)}
+
+def _llm_select_with_reasons(summary: str, cand_list: list, by_slug: dict) -> dict:
+    """Уровень C: LLM-арбитр только в серой зоне. temperature=0 (см. _llm), обязательное
+    короткое обоснование на каждую выбранную папку. Возвращает {slug: reason}. Пустой ответ
+    — законно (ни одна не подходит). При ошибке — {} (наверх решит запас по вектору)."""
     lines = []
-    for slug, name, _st, _sc in candidates:
+    for slug, name, _st, _sc in cand_list:
         crit = "; ".join((by_slug.get(slug) or {}).get("criteria") or [])
         lines.append(f"- {slug} ({name}): {crit}")
-    chosen = [c[0] for c in candidates]  # запасной вариант, если LLM не ответит
-    try:
-        raw = _llm(SELECT_SYSTEM, f"Описание документа:\n{summary[:2000]}\n\nПапки-кандидаты:\n" + "\n".join(lines))
-        picked = _parse_json(raw).get("folders") or []
-        picked = [s for s in picked if s in cand_index]
-        if picked:
-            chosen = picked
+    allowed = {c[0] for c in cand_list}
+    raw = _llm(SELECT_SYSTEM, f"Описание документа:\n{summary[:2000]}\n\nПапки-кандидаты:\n" + "\n".join(lines))
+    picked = _parse_json(raw).get("folders") or []
+    out = {}
+    for item in picked:
+        if isinstance(item, dict):
+            slug = item.get("slug")
+            reason = (item.get("reason") or "").strip() or "LLM: соответствует критерию папки"
         else:
-            # LLM явно сказала «ни одна не подходит» — уважаем: документ уходит ТОЛЬКО в
-            # общую базу «Все документы», а не форсится в неподходящие папки по вектору
-            # (первую помощь не пихаем в HR-папки, если подходящей папки просто нет).
-            chosen = []
-    except Exception as e:
-        # Только при ОШИБКЕ модели берём векторный запас — иначе доверяем решению LLM.
-        _log("SELECT", f"LLM не уточнила выбор ({e}) — беру уверенные векторные как запас")
-        chosen = [c[0] for c in candidates if c[3] >= 0.45]
+            slug, reason = item, "LLM: соответствует критерию папки"
+        if slug in allowed:
+            out[slug] = reason
+    return out
+
+
+def classify_document(summary: str, full_text: str = "") -> dict:
+    """Гибрид (ТЗ 1.4): правила -> маржа -> LLM-арбитр. Возвращает folders, stage_ids,
+    candidates и decisions (по каждой выбранной папке: метод, score, «почему»).
+    Пустой folders — документ уходит только в общую базу «Все документы».
+    full_text — полный текст документа для сигнатур уровня A (если есть)."""
+    by_slug = {f["slug"]: f for f in folders.list_folders(include_disabled=False)}
+    candidates = match_folders(summary, top_k=6, threshold=DOC_MATCH_THRESHOLD)
+    cand_index = {c[0]: c for c in candidates}
+
+    chosen, decisions = [], []
+
+    def _add(slug, method, score, reason):
+        if slug in chosen:
+            return
+        chosen.append(slug)
+        decisions.append({"slug": slug, "name": (by_slug.get(slug) or {}).get("name", slug),
+                          "method": method, "score": (round(score, 3) if score is not None else None),
+                          "reason": reason})
+
+    # --- Уровень A: детерминированные правила (сигнатуры из criteria) ---
+    for slug, crit in _rule_hits((summary or "") + "\n" + (full_text or ""), by_slug).items():
+        _add(slug, "rule", (cand_index.get(slug) or (0, 0, 0, None))[3], f"правило: сигнатура «{crit}»")
+
+    # --- Уровень B: векторная маржа top-1 vs top-2 (без «магического» абсолютного порога) ---
+    rest = [c for c in candidates if c[0] not in chosen]
+    gray = rest
+    if rest:
+        top1 = rest[0][3]
+        top2 = rest[1][3] if len(rest) > 1 else 0.0
+        if top1 >= B_FLOOR and (top1 - top2) >= B_MARGIN:
+            s, n, _st, sc = rest[0]
+            _add(s, "vector-margin", sc, f"маржа {top1 - top2:.2f} над следующим кандидатом")
+            gray = rest[1:]
+
+    # --- Уровень C: LLM-арбитр только по серой зоне (A не сработал, B не уверен) ---
+    if gray:
+        try:
+            reasons = _llm_select_with_reasons(summary, gray, by_slug)
+            for slug, reason in reasons.items():
+                _add(slug, "llm", (cand_index.get(slug) or (0, 0, 0, None))[3], reason)
+        except Exception as e:
+            _log("SELECT", f"LLM-арбитр не ответил ({e}) — беру уверенные векторные как запас")
+            for s, n, _st, sc in gray:
+                if sc >= 0.45:
+                    _add(s, "vector-fallback", sc, "запас по вектору (LLM недоступна)")
 
     stage_ids = _stage_union(chosen, by_slug)
     return {
         "folders": chosen,
         "stage_ids": stage_ids,
         "candidates": [{"slug": s, "name": n, "score": round(sc, 3)} for s, n, _st, sc in candidates],
+        "decisions": decisions,
     }
 
 

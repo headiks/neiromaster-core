@@ -270,8 +270,8 @@ def index_document(filepath: Path) -> dict:
         # ---- Похожие/связанные документы (дубли, обновления, противоречия) ----
         similar = classify.find_similar_docs(summary, exclude=filename)
 
-        # ---- Классификация документа в существующие папки ----
-        doc_cls = classify.classify_document(summary)
+        # ---- Классификация документа в существующие папки (гибрид A/B/C, ТЗ 1.4) ----
+        doc_cls = classify.classify_document(summary, full_text=markdown_text)
         doc_folders = doc_cls["folders"]
 
         # ---- Профессия документа (приоритет поиска по должности сотрудника) ----
@@ -286,6 +286,7 @@ def index_document(filepath: Path) -> dict:
             summary=summary,
             folders=doc_folders,
             stage_ids=doc_cls["stage_ids"],
+            folder_reasons=doc_cls.get("decisions") or [],   # «почему» (метод/score/критерий) — ТЗ 1.4
             profession=doc_profession,
             similar=similar,
             path=filename,
@@ -303,6 +304,7 @@ def index_document(filepath: Path) -> dict:
         src_hash = file_hash(filepath)
         points = []
         seg_index = 0
+        section_counters = {}   # раздел -> счётчик чанков внутри него (для стабильного ID)
         prev_tail = ""   # хвост предыдущего чанка для перекрытия контекста (ТЗ §12)
         for chunk in chunks:
             headings = list(getattr(chunk.meta, "headings", None) or [])
@@ -335,7 +337,11 @@ def index_document(filepath: Path) -> dict:
                 # Этапы/подэтапы каталога — сразу при индексации: чанк готов для персональных
                 # планов без отдельной ручной раскладки. Мусор (meaningful=False) не тегируем.
                 plan_stages, plan_substages = _stage_tags(vec) if meaningful else ([], [])
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{filename}-{src_hash}-{seg_index}"))
+                # Стабильный ID = hash(файл + путь раздела + № внутри раздела). Не зависит от
+                # содержимого файла -> переиндексация даёт ТЕ ЖЕ ID (обновление, не дубли). ТЗ 1.3.
+                sec_n = section_counters.get(section, 0)
+                section_counters[section] = sec_n + 1
+                point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{filename}|{section}|{sec_n}"))
                 points.append(PointStruct(
                     id=point_id,
                     vector=vec,
@@ -350,6 +356,7 @@ def index_document(filepath: Path) -> dict:
                         "plan_substages": plan_substages,
                         "profession": chunk_prof,
                         "section": section,
+                        "section_seq": sec_n,
                         "headings": headings,
                         "page": page_no,
                         "chunk_index": seg_index,
@@ -963,7 +970,15 @@ def reanalyze_document(filename: str) -> dict:
         with _registry_lock:
             entry = _load_registry().get(filename)
         summary = (entry or {}).get("summary") or ""
-        doc_cls = classify.classify_document(summary) if summary else {"folders": [], "stage_ids": []}
+        # Полный текст для сигнатур уровня A (если сохранённый markdown доступен).
+        full_text = ""
+        mdp = (entry or {}).get("markdown_path")
+        if mdp:
+            mdf = CONVERTED_DIR / mdp
+            if mdf.exists():
+                full_text = mdf.read_text(encoding="utf-8", errors="ignore")
+        doc_cls = (classify.classify_document(summary, full_text=full_text) if summary
+                   else {"folders": [], "stage_ids": [], "decisions": []})
         doc_folders = doc_cls["folders"]
         # Профессия документа стабильна (задана при индексации) — берём из реестра, не гоняем
         # LLM. Переанализ реагирует на изменения ПАПОК/каталога, а не на профессию.
@@ -1000,6 +1015,7 @@ def reanalyze_document(filename: str) -> dict:
             if offset is None:
                 break
         _update_registry(filename, folders=doc_folders, stage_ids=doc_cls["stage_ids"],
+                         folder_reasons=doc_cls.get("decisions") or [],
                          profession=doc_profession, status="indexed", error=None)
         return {"filename": filename, "folders": doc_folders, "chunks": touched}
     except Exception as e:

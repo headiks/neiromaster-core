@@ -423,9 +423,12 @@ def _route_to_human(result: dict, user: dict) -> dict:
     """
     Вопрос без ответа не теряем: ставим в очередь администратору и показываем
     сотруднику понятное сообщение вместо пустого ответа/технической ошибки.
-    Срабатывает для escalate (ЧС) и для rag без найденного ответа.
+    Срабатывает для escalate (ЧС) и для rag без найденного ответа. ЧС по регэкспу
+    (result["emergency"]) уже несёт инструкцию — её сохраняем, но вопрос всё равно
+    ставим в очередь человеку.
     """
-    if result.get("answer") or result.get("route") not in ("rag", "escalate"):
+    emergency = result.get("emergency")
+    if not emergency and (result.get("answer") or result.get("route") not in ("rag", "escalate")):
         return result
     cls = result.get("classification") or {}
     reason = questions.REASON_ESCALATE if (result["route"] == "escalate" or cls.get("risk_flag")) \
@@ -434,7 +437,8 @@ def _route_to_human(result: dict, user: dict) -> dict:
                      reason, cls.get("risk_type"))
     result["escalated"] = True
     result["error"] = None  # «нет кандидатов» — не ошибка для пользователя, это эскалация
-    result["answer"] = ESCALATE_REPLY if reason == questions.REASON_ESCALATE else NO_ANSWER_REPLY
+    if not result.get("answer"):
+        result["answer"] = ESCALATE_REPLY if reason == questions.REASON_ESCALATE else NO_ANSWER_REPLY
     return result
 
 

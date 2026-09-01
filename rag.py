@@ -98,6 +98,7 @@ def small_llm(system, user, step_name="SMALL_LLM"):
             {"role": "user", "content": user},
         ],
         "stream": False,
+        "options": {"temperature": 0},   # детерминированный вывод (ТЗ 1.6)
     }, timeout=SMALL_LLM_TIMEOUT)
     r.raise_for_status()
     response = r.json()["message"]["content"]
@@ -117,7 +118,7 @@ def big_llm(system, user):
         ],
         "stream": False,
         "think": False,
-        "options": {"num_keep": 0}
+        "options": {"num_keep": 0, "temperature": 0},   # детерминированный вывод (ТЗ 1.6)
     }, timeout=BIG_LLM_TIMEOUT)
     r.raise_for_status()
     response = r.json()["message"]["content"]
@@ -225,6 +226,49 @@ def resolve_question(question, history):
     except Exception as e:
         log("CONTEXTUALIZE", f"Ошибка разбора ответа, используем исходный вопрос. Ошибка: {e}")
         return {"standalone_question": question, "context_used": False}
+
+# ---------- ЧС: детерминированные триггеры (ТЗ 1.7) ----------
+# Критичный по времени путь простой и предсказуемый: сначала регэкспы, нейронка — только
+# вторичная проверка. Совпадение = мгновенный приоритет и выдача инструкции ДО всякого RAG.
+# Порядок важен: первое совпадение выигрывает. Инструкция короткая и безопасная; вопрос
+# при этом всё равно уходит человеку (эскалация в очередь).
+_EMERGENCY_TAIL = ("Немедленно сообщите непосредственному руководителю. "
+                   "При угрозе жизни и здоровью звоните 112. Вопрос передан ответственному специалисту.")
+EMERGENCY_RULES = [
+    (r"пожар|задымл|возгоран|\bгорит\b|\bогонь\b|полыхает",
+     "пожар",
+     "Пожар/задымление. Прекратите работу, при возможности обесточьте участок, покиньте помещение по плану эвакуации, не пользуйтесь лифтом."),
+    (r"эвакуац",
+     "эвакуация",
+     "Эвакуация. Двигайтесь к ближайшему выходу по плану эвакуации, помогите тем, кто рядом, не возвращайтесь за вещами."),
+    (r"\bвзрыв|обрушен|обвал",
+     "авария",
+     "Авария (взрыв/обрушение). Отойдите на безопасное расстояние, не приближайтесь к зоне, предупредите окружающих."),
+    (r"утечк|разлив|хим(ическ|реагент)|\bгаз(ует|ом|а)?\b|отравлен|токсич",
+     "утечка/химия",
+     "Утечка/химическая опасность. Покиньте зону, не вдыхайте пары, перекройте источник только если это безопасно."),
+    (r"удар(ил|ило|ило меня)? ?ток|электротравм|под напряж|замкнул",
+     "электротравма",
+     "Электротравма. Обесточьте участок до касания пострадавшего, не трогайте его под напряжением."),
+    (r"травм|ранен|\bкровь\b|кровотеч|перелом|ожог|упал с высот|без сознан|потер(ял|яла) сознан|не дыш|задыха|приступ|инфаркт|инсульт|сердц",
+     "травма/здоровье",
+     "Травма/угроза здоровью. Окажите первую помощь по возможности, не перемещайте пострадавшего без необходимости, вызовите скорую 103/112."),
+    (r"напал|ударил|избил|угрож|насил|оружи|захват",
+     "угроза/насилие",
+     "Угроза безопасности. Отойдите в безопасное место, при угрозе жизни звоните 112."),
+]
+_EMERGENCY_COMPILED = [(re.compile(p, re.IGNORECASE), t, instr) for p, t, instr in EMERGENCY_RULES]
+
+
+def detect_emergency(text: str):
+    """Первое совпадение триггера ЧС → (risk_type, instruction). Иначе None. Только код,
+    без нейронки — предсказуемо и мгновенно."""
+    t = text or ""
+    for rx, risk_type, instr in _EMERGENCY_COMPILED:
+        if rx.search(t):
+            return {"risk_type": risk_type, "instruction": instr}
+    return None
+
 
 # ---------- Классификация (усиленная) ----------
 CLASSIFY_SYSTEM = """
@@ -531,6 +575,25 @@ def handle_question(question, history=None, current_stage_ids=None, position=Non
     total_start = time.time()
     history = (history or [])[-HISTORY_WINDOW:]
 
+    # ЧС (ТЗ 1.7): детерминированные триггеры срабатывают ДО контекстуализации и RAG.
+    # Критичный по времени путь не должен зависеть от нейронки. Проверяем исходный текст.
+    emergency = detect_emergency(question)
+    if emergency:
+        log("EMERGENCY", f"Триггер ЧС: {emergency['risk_type']}")
+        return {
+            "question": question,
+            "resolved_question": None,
+            "context_used": False,
+            "classification": {"route": "escalate", "risk_flag": True, "risk_type": emergency["risk_type"]},
+            "route": "escalate",
+            "candidates": [],
+            "top_fragments": [],
+            "answer": f"⚠️ {emergency['instruction']}\n\n{_EMERGENCY_TAIL}",
+            "emergency": True,   # app всё равно поставит вопрос в очередь человеку
+            "elapsed_time": time.time() - total_start,
+            "error": None,
+        }
+
     # Разрешаем зависимость от контекста ДО классификации/поиска — короткие вопросы
     # вроде "Где взять" сами по себе не несут смысла для векторного поиска.
     resolved = resolve_question(question, history)
@@ -594,9 +657,19 @@ def handle_question(question, history=None, current_stage_ids=None, position=Non
                 if neigh and neigh not in context_fragments:
                     context_fragments.append(neigh)
 
+    # Лог источников (ТЗ 1.6): какие чанки (файл + раздел + страница) пошли в ответ —
+    # ответ становится проверяемым. Собираем из кандидатов, попавших в top_fragments.
+    sources = []
+    for cand in candidates:
+        pl = cand.get("payload") or {}
+        if pl.get("text") in top_fragments:
+            sources.append({"source": pl.get("source"), "section": pl.get("section"), "page": pl.get("page")})
+
     answer = None
     if top_fragments:
         answer = generate_answer(effective_question, context_fragments)
+        log("SOURCES", "; ".join(f"{s['source']} / {s.get('section') or '—'}"
+                                 f"{' стр.'+str(s['page']) if s.get('page') else ''}" for s in sources) or "(нет)")
     else:
         log("HANDLE", "Confidence gate не пройден")
 
@@ -604,6 +677,7 @@ def handle_question(question, history=None, current_stage_ids=None, position=Non
         **base_result,
         "candidates": ranked,
         "top_fragments": top_fragments,
+        "sources": sources,
         "answer": answer,
         "elapsed_time": time.time() - total_start,
         "error": None
