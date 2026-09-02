@@ -164,12 +164,17 @@ def find_by_filename(filename: str):
                     (filename,), fetch="one")
 
 
+def list_documents() -> list:
+    """Имена документов, размеченных docpipe (для выбора в просмотрщике)."""
+    return [r["filename"] for r in db.query("SELECT DISTINCT filename FROM documents ORDER BY filename")]
+
+
 def sections_with_labels(doc_id: str) -> list:
     """Секции документа с их LLM-метками (этапы/подэтапы/профессии/обоснование)."""
     return db.query(
-        "SELECT s.seq, s.heading_path, s.page_from, s.text, "
-        "       l.is_meaningful, l.substages, l.stages, l.professions, l.is_general, "
-        "       l.prof_conf, l.why, l.source "
+        "SELECT s.id AS section_id, s.seq, s.heading_path, s.page_from, s.text, "
+        "       l.is_meaningful, l.reject_reason, l.substages, l.stages, l.professions, "
+        "       l.is_general, l.prof_conf, l.why, l.source "
         "FROM sections s LEFT JOIN section_labels l ON l.section_id = s.id "
         "WHERE s.doc_id = %s ORDER BY s.seq",
         (doc_id,),

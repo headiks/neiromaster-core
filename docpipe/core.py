@@ -150,9 +150,18 @@ def stages_from_substages(substage_ids, structure: dict) -> list:
 
 
 # ---------- Валидация/нормализация ответа модели (проход 2) ----------
+# Селективность подэтапов: модель на большом каталоге склонна вываливать почти весь список
+# с убывающей уверенностью вместо выбора. Держим только уверенные и немного.
+# ponytail: порог+кап — эвристика; настоящий потолок в том, что часть подэтапов каталога —
+# это процессные шаги адаптации (тест, встреча с наставником), а не темы контента, поэтому
+# документ-регламент к ним и не должен относиться. Порог поднять/опустить по калибровке.
+SUBSTAGE_MIN_CONF = 0.6   # ниже — не привязываем
+SUBSTAGE_MAX = 5          # максимум подэтапов на блок
+
+
 def coerce_section_labels(raw: dict, structure: dict) -> dict:
     """Приводит сырой JSON модели к нормализованной метке секции.
-    - substages: оставляем только id, существующие в плане; confidence -> float 0..1;
+    - substages: только валидные id с confidence >= SUBSTAGE_MIN_CONF, топ-SUBSTAGE_MAX по уверенности;
     - stages выводятся из подэтапов (не из ответа модели);
     - professions — как есть (матч со штаткой делает вызывающий слой, эмбеддингом);
     - is_meaningful/is_general/why нормализуются.
@@ -174,7 +183,11 @@ def coerce_section_labels(raw: dict, structure: dict) -> dict:
                 c = float(conf)
             except (TypeError, ValueError):
                 c = 1.0
-            subs.append({"id": sid, "confidence": max(0.0, min(1.0, c))})
+            c = max(0.0, min(1.0, c))
+            if c >= SUBSTAGE_MIN_CONF:
+                subs.append({"id": sid, "confidence": c})
+    subs.sort(key=lambda x: x["confidence"], reverse=True)
+    subs = subs[:SUBSTAGE_MAX]
 
     professions = [str(p).strip() for p in (raw.get("professions") or []) if str(p).strip()]
     is_general = bool(raw.get("is_general")) or (not professions and not raw.get("professions"))

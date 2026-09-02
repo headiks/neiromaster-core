@@ -174,6 +174,43 @@ def retrieve(substage_id: str, position: str = "", plan_version: str = "current"
     return qdrant_sink.retrieve(substage_id, position, plan_version, limit)
 
 
+def document_breakdown(filename: str, plan_version: str = "current") -> dict:
+    """Полный разбор документа для просмотра человеком: карточка документа + блоки (секции)
+    с их метками, обоснованием и НАЗВАНИЯМИ/ОПИСАНИЯМИ этапов и подэтапов + чанки блока.
+    None — если документ ещё не размечен docpipe."""
+    doc = store.find_by_filename(filename)
+    if not doc:
+        return None
+    structure = store.get_plan_structure(plan_version)
+    stage_lut, sub_lut = {}, {}
+    for st in structure.get("stages") or []:
+        stage_lut[st["id"]] = {"id": st["id"], "title": st.get("title", ""),
+                               "description": st.get("description", "")}
+        for sub in st.get("substages") or []:
+            sub_lut[sub["id"]] = {"id": sub["id"], "title": sub.get("title", ""),
+                                  "description": sub.get("description", ""), "stage_id": st["id"]}
+
+    sections = []
+    for r in store.sections_with_labels(doc["id"]):
+        r = dict(r)
+        subs = []
+        for s in (r.get("substages") or []):
+            meta = sub_lut.get(s.get("id"), {"id": s.get("id"), "title": "", "description": ""})
+            subs.append({**meta, "confidence": s.get("confidence")})
+        stages = [stage_lut.get(sid, {"id": sid, "title": "", "description": ""})
+                  for sid in (r.get("stages") or [])]
+        chunks = [{"seq": c["seq"], "text": c["text"]} for c in store.list_chunks(r["section_id"])]
+        sections.append({
+            "seq": r["seq"], "heading_path": r.get("heading_path") or [], "page": r.get("page_from"),
+            "text": r.get("text") or "", "is_meaningful": r.get("is_meaningful"),
+            "reject_reason": r.get("reject_reason"), "is_general": r.get("is_general"),
+            "why": r.get("why"), "professions": r.get("professions") or [],
+            "prof_conf": r.get("prof_conf"), "source": r.get("source"),
+            "substages": subs, "stages": stages, "chunks": chunks,
+        })
+    return {"filename": filename, "doc_card": doc.get("doc_card") or {}, "sections": sections}
+
+
 # ---------- Асинхронная очередь разметки (retry + backoff + возобновление) ----------
 _queue: "queue.Queue" = queue.Queue()
 _worker_started = False

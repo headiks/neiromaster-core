@@ -651,16 +651,34 @@ async def get_label_job(job_id: str):
     return dict(job)
 
 
+@app.get("/documents/labeled", dependencies=admin_only)
+async def list_labeled_documents():
+    """Имена документов, размеченных docpipe (для просмотрщика разбора)."""
+    import docpipe.store as dstore
+    return {"documents": dstore.list_documents()}
+
+
 @app.get("/documents/{filename}/labels", dependencies=admin_only)
 async def get_document_labels(filename: str):
-    """Точные метки документа (docpipe): по секциям — какие этапы/подэтапы/профессии и почему.
-    Это источник правды по разметке (LLM, temp=0), в отличие от косинусной прикидки."""
-    import docpipe.store as dstore
-    doc = dstore.find_by_filename(filename)
-    if not doc:
+    """Полный разбор документа (docpipe): карточка документа + блоки (секции) с текстом,
+    метками (этапы/подэтапы/профессии), обоснованием «почему», названиями и описаниями
+    этапов/подэтапов, и чанками каждого блока. Источник правды по разметке (LLM, temp=0)."""
+    import docpipe
+    data = docpipe.document_breakdown(filename)
+    if data is None:
         raise HTTPException(status_code=404, detail="Документ не размечен docpipe (загрузите заново или дождитесь разметки)")
-    rows = dstore.sections_with_labels(doc["id"])
-    return {"filename": filename, "doc_card": doc.get("doc_card") or {}, "sections": [dict(r) for r in rows]}
+    return data
+
+
+@app.get("/doc-breakdown", response_class=HTMLResponse)
+async def doc_breakdown_page(request: Request):
+    """Страница просмотра разбора документа (блоки → чанки, метки, обоснования)."""
+    user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if not users.is_admin(user):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(_read_static("doc_breakdown.html"))
 
 
 @app.get("/documents/{filename}/chunks", dependencies=admin_only)

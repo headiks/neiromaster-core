@@ -73,15 +73,29 @@ def test_coerce_drops_unknown_and_coerces_conf():
     raw = {"is_meaningful": True,
            "substages": [{"id": "firstday.equipment", "confidence": "0.8"},
                          {"id": "NETU", "confidence": 0.9},          # нет в плане -> отбросить
-                         {"id": "training.shift", "confidence": 5}], # >1 -> clamp
+                         {"id": "firstday.rules", "confidence": 0.3}, # < порога -> отбросить
+                         {"id": "training.shift", "confidence": 5}], # >1 -> clamp до 1.0
            "professions": ["водитель"], "is_general": False, "why": "x"}
     out = core.coerce_section_labels(raw, STRUCTURE)
     ids = [s["id"] for s in out["substages"]]
-    assert ids == ["firstday.equipment", "training.shift"]           # NETU выкинут
-    assert out["substages"][0]["confidence"] == 0.8
-    assert out["substages"][1]["confidence"] == 1.0                  # clamp
+    # NETU выкинут (нет в плане), firstday.rules выкинут (< SUBSTAGE_MIN_CONF); отсортировано по уверенности
+    assert ids == ["training.shift", "firstday.equipment"]
+    assert out["substages"][0]["confidence"] == 1.0                  # clamp
+    assert out["substages"][1]["confidence"] == 0.8
     assert set(out["stages"]) == {"firstday", "training"}            # этапы из подэтапов
     assert out["is_general"] is False and out["professions"] == ["водитель"]
+
+
+def test_coerce_caps_substage_count():
+    # На «свалке» из многих подэтапов держим не больше SUBSTAGE_MAX, только уверенные.
+    raw = {"is_meaningful": True,
+           "substages": [{"id": "firstday.equipment", "confidence": 0.9},
+                         {"id": "firstday.rules", "confidence": 0.8},
+                         {"id": "training.shift", "confidence": 0.65}],
+           "professions": [], "is_general": True, "why": ""}
+    out = core.coerce_section_labels(raw, STRUCTURE)
+    assert len(out["substages"]) <= core.SUBSTAGE_MAX
+    assert all(s["confidence"] >= core.SUBSTAGE_MIN_CONF for s in out["substages"])
 
 
 def test_coerce_general_empty():

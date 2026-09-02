@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Разбор документа — НейроМастер</title>
+<style>
+  body { font-family:'Segoe UI',Tahoma,sans-serif; max-width:1000px; margin:24px auto; padding:16px; background:#f5f7fa; color:#1e293b; }
+  .head { display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #3b82f6; padding-bottom:10px; }
+  h1 { font-size:22px; margin:0; }
+  a.link,button.btn { border:1px solid #cbd5e1; border-radius:8px; padding:7px 13px; background:#fff; cursor:pointer; font-size:14px; text-decoration:none; color:#475569; font-family:inherit; }
+  select { padding:8px 10px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px; min-width:280px; }
+  .card { background:#fff; border-radius:10px; padding:16px; margin:12px 0; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .muted { color:#94a3b8; font-size:13px; }
+  .block { border-left:4px solid #3b82f6; }
+  .block.junk { border-left-color:#cbd5e1; opacity:.7; }
+  .why { background:#eff6ff; border-left:4px solid #3b82f6; padding:8px 12px; border-radius:6px; margin:8px 0; font-size:14px; color:#1e40af; }
+  .chip { display:inline-block; background:#e2e8f0; border-radius:16px; padding:3px 10px; margin:3px 4px 3px 0; font-size:13px; }
+  .chip.stage { background:#dbeafe; color:#1e40af; }
+  .chip.sub { background:#dcfce7; color:#166534; }
+  .chip.prof { background:#fef9c3; color:#854d0e; }
+  .chip.gen { background:#f1f5f9; color:#475569; }
+  .desc { font-size:13px; color:#475569; margin:2px 0 8px 4px; }
+  .txt { white-space:pre-wrap; font-size:14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px; margin-top:8px; }
+  .lbl { font-size:12px; text-transform:uppercase; letter-spacing:.03em; color:#64748b; margin-top:10px; }
+  details { margin-top:8px; } summary { cursor:pointer; font-size:14px; color:#3b82f6; }
+  .chunk { border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; margin:6px 0; font-size:13px; white-space:pre-wrap; background:#fff; }
+  .h2 { font-size:18px; margin:0 0 6px; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>Разбор документа</h1>
+    <a class="link" href="/admin">← Админка</a>
+  </div>
+
+  <div class="card">
+    <label class="muted">Документ (размеченные docpipe)</label><br>
+    <select id="pick" onchange="load()"><option value="">— загрузка списка —</option></select>
+    <button class="btn" onclick="load()">Обновить</button>
+    <div class="muted" style="margin-top:8px;">Блок = раздел документа по заголовкам (до ~1200 токенов). Чанк = 200–400 токенов с перекрытием в 1 предложение, наследует метки блока.</div>
+  </div>
+
+  <div id="out"></div>
+
+<script>
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+function api(u,o){return fetch(u,o).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
+
+// список документов, размеченных docpipe
+api('/documents/labeled').then(r=>r.json()).then(d=>{
+  const sel=document.getElementById('pick');
+  const docs=(d.documents||[]).filter(Boolean);
+  sel.innerHTML='<option value="">— выберите документ —</option>'+docs.map(f=>`<option value="${esc(f)}">${esc(f)}</option>`).join('')
+    + (docs.length?'':'<option value="" disabled>нет размеченных документов</option>');
+}).catch(()=>{});
+
+function load(){
+  const f=document.getElementById('pick').value;
+  const out=document.getElementById('out');
+  if(!f){out.innerHTML='';return;}
+  out.innerHTML='<div class="card muted">Загрузка разбора…</div>';
+  api(`/documents/${encodeURIComponent(f)}/labels`).then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{
+    if(!ok){out.innerHTML=`<div class="card">${esc(d.detail||'Документ не размечен. Загрузите его заново — разметка идёт в фоне.')}</div>`;return;}
+    render(d);
+  });
+}
+
+function render(d){
+  const c=d.doc_card||{};
+  let h=`<div class="card">
+    <div class="h2">📄 ${esc(d.filename)}</div>
+    <div class="lbl">Описание документа</div>
+    <div>${esc(c.summary||'—')}</div>
+    <div style="margin-top:8px;">
+      <span class="chip">тип: ${esc(c.doc_type||'—')}</span>
+      <span class="chip">охват: ${esc(c.scope||'—')}</span>
+      <span class="chip">аудитория: ${esc((c.audience||[]).join(', ')||'—')}</span>
+    </div>
+  </div>`;
+
+  const secs=d.sections||[];
+  h+=`<div class="muted" style="margin:6px 4px;">Блоков: ${secs.length}</div>`;
+  secs.forEach((s,i)=>{
+    const junk = s.is_meaningful===false;
+    h+=`<div class="card block ${junk?'junk':''}">
+      <div class="h2">Блок ${i+1}${s.heading_path&&s.heading_path.length?': '+esc(s.heading_path.join(' / ')):''}
+        ${s.page?`<span class="muted">стр. ${esc(s.page)}</span>`:''}</div>`;
+    if(junk){
+      h+=`<div class="muted">Служебный фрагмент (не размечается): ${esc(s.reject_reason||'')}</div>`;
+    } else {
+      if(s.why) h+=`<div class="why"><b>Почему так размечено:</b> ${esc(s.why)}</div>`;
+
+      h+=`<div class="lbl">Этапы</div>`;
+      h+= (s.stages||[]).length ? s.stages.map(st=>
+            `<div><span class="chip stage">${esc(st.title||st.id)}</span><div class="desc">${esc(st.description||'')}</div></div>`).join('')
+          : '<span class="muted">—</span>';
+
+      h+=`<div class="lbl">Подэтапы (может быть несколько)</div>`;
+      h+= (s.substages||[]).length ? s.substages.map(su=>
+            `<div><span class="chip sub">${esc(su.title||su.id)}</span>
+             <span class="muted">уверенность ${su.confidence!=null?Math.round(su.confidence*100)+'%':'—'}</span>
+             <div class="desc">${esc(su.description||'')}</div></div>`).join('')
+          : '<span class="muted">—</span>';
+
+      h+=`<div class="lbl">Профессии</div>`;
+      if(s.is_general){
+        h+=`<span class="chip gen">общий для всех</span>`;
+      } else if((s.professions||[]).length){
+        h+= s.professions.map(p=>`<span class="chip prof">${esc(p)}</span>`).join('')
+          + (s.prof_conf!=null?` <span class="muted">уверенность ${Math.round(s.prof_conf*100)}%</span>`:'');
+      } else {
+        h+='<span class="muted">—</span>';
+      }
+    }
+
+    // текст блока
+    h+=`<div class="lbl">Текст блока</div><div class="txt">${esc(s.text||'')}</div>`;
+
+    // чанки блока
+    const ch=s.chunks||[];
+    h+=`<details><summary>Чанки блока (${ch.length}) — то, что идёт в RAG-поиск</summary>`;
+    h+= ch.length? ch.map((k,j)=>`<div class="chunk"><b>Чанк ${j+1}.</b> ${esc(k.text)}</div>`).join('')
+        : '<div class="muted">нет чанков (служебный блок)</div>';
+    h+=`</details></div>`;
+  });
+
+  document.getElementById('out').innerHTML=h;
+}
+</script>
+</body>
+</html>
