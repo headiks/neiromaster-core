@@ -439,9 +439,10 @@ HYDE_SYSTEM = """Напиши короткий правдоподобный фр
 def hyde_query(question):
     """HyDE: гипотетический ответ модели. Вопрос вроде «перечень состояний» вектором далёк от
     самого списка («отсутствие сознания, кровотечения…»), а придуманный ответ содержит те же
-    слова и подтягивает нужные чанки. Сбой — молча возвращаем исходный вопрос."""
+    слова и подтягивает нужные чанки. Большая модель (14b): малая (3b) на КАПС-заголовках и
+    формальных формулировках выдаёт бред, из-за чего список не подтягивается. Сбой — исходный вопрос."""
     try:
-        hyp = (small_llm(HYDE_SYSTEM, question, step_name="HYDE") or "").strip()
+        hyp = (big_llm(HYDE_SYSTEM, question) or "").strip()
         return hyp or question
     except Exception:
         return question
@@ -707,9 +708,9 @@ def handle_question(question, history=None, current_stage_ids=None, position=Non
     for cand in candidates[:MAX_CONTEXT_FRAGMENTS]:
         pl = cand.get("payload") or {}
         if pl.get("text") in top_fragments:
-            # span=2: перечни/списки разбиты на несколько соседних чанков — берём шире,
-            # чтобы в контекст попал весь список, а не его начало.
-            for neigh in fetch_neighbors(pl.get("source"), pl.get("chunk_index"), span=2):
+            # span=4: перечни/приложения разбиты на несколько соседних чанков — берём широко,
+            # чтобы в контекст попал ВЕСЬ список, даже если найден только его фрагмент.
+            for neigh in fetch_neighbors(pl.get("source"), pl.get("chunk_index"), span=4):
                 if neigh and neigh not in context_fragments:
                     context_fragments.append(neigh)
 
