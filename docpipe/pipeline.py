@@ -13,8 +13,6 @@ import hashlib
 import threading
 from pathlib import Path
 
-from docling.chunking import HybridChunker
-
 from config import get_embedding
 from . import core, llm, store, professions, qdrant_sink
 from .qdrant_sink import EMBED_VERSION
@@ -23,7 +21,19 @@ from .qdrant_sink import EMBED_VERSION
 # у docpipe своя задача — дать LLM связный кусок с контекстом, а не короткий вектор.
 # merge_peers склеивает соседние мелкие фрагменты одного уровня заголовков.
 SECTION_MAX_TOKENS = int(os.environ.get("NEIROMASTER_DOCPIPE_SECTION_TOKENS", "1800"))
-_section_chunker = HybridChunker(max_tokens=SECTION_MAX_TOKENS, merge_peers=True)
+# Верхний предел размера чанка: сверх него режем по предложениям (окно эмбеддера bge-m3 ~4096).
+CHUNK_MAX_TOKENS = int(os.environ.get("NEIROMASTER_DOCPIPE_CHUNK_MAX_TOKENS", "1200"))
+_section_chunker = None
+
+
+def _get_section_chunker():
+    """Ленивая инициализация: docling импортируем только при реальном разборе документа,
+    чтобы `import docpipe` (core/store/тесты) не требовал тяжёлый docling."""
+    global _section_chunker
+    if _section_chunker is None:
+        from docling.chunking import HybridChunker
+        _section_chunker = HybridChunker(max_tokens=SECTION_MAX_TOKENS, merge_peers=True)
+    return _section_chunker
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -41,7 +51,7 @@ def _parse(filepath: Path):
     # Секции = крупные чанки (свой HybridChunker на SECTION_MAX_TOKENS, не 512 от indexing),
     # сгруппированы по заголовкам; очень крупные при необходимости дробим по предложениям.
     sections = []
-    for ch in _section_chunker.chunk(doc):
+    for ch in _get_section_chunker().chunk(doc):
         heading_path = [h for h in (getattr(ch.meta, "headings", None) or []) if h]
         page = indexing.extract_page_no(ch)
         for piece in core.split_section_text(ch.text, max_tokens=SECTION_MAX_TOKENS):
@@ -85,6 +95,7 @@ def _label_section(sec: dict, repeated: set, card: dict, structure: dict, positi
     norm["is_general"] = norm["is_general"] and not matched
     norm["prof_conf"] = prof_conf
     norm["reject_reason"] = None
+    norm["chunk_markers"] = raw.get("chunks") or []   # рекомендация модели, как резать на чанки
     return norm
 
 
@@ -120,7 +131,16 @@ def ingest(filepath, filename: str = None, plan_version: str = "current",
         label = _label_section(sec, repeated, card, structure, positions)
         store.upsert_section_label(sid, label, source="llm", plan_version=plan_version,
                                    model=llm.MODEL, prompt_version=llm.PROMPT_VERSION)
-        store.replace_chunks(sid, core.to_chunks(sec["text"]), EMBED_VERSION)
+        # Чанки — по рекомендации модели (логически завершённые куски); текст режем из
+        # исходника по маркерам. Не сработало — детерминированный фолбэк по предложениям.
+        chunks = core.chunks_from_markers(sec["text"], label.get("chunk_markers")) or core.to_chunks(sec["text"])
+        # Страховка: слишком крупный логический кусок не влезет в окно эмбеддера (bge-m3, ~4096)
+        # и обрежется. Такой дорезаем по предложениям; остальные оставляем как задумала модель.
+        # ponytail: потолок = окно эмбеддинга; env NEIROMASTER_DOCPIPE_CHUNK_MAX_TOKENS.
+        capped = []
+        for c in chunks:
+            capped.extend(core.to_chunks(c) if core.est_tokens(c) > CHUNK_MAX_TOKENS else [c])
+        store.replace_chunks(sid, capped or chunks, EMBED_VERSION)
         store.update_job(job_id, done=seq + 1, last_seq=seq)
 
     qdrant_sink.sink_document(doc_id)                  # запись производной копии в Qdrant

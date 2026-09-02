@@ -104,6 +104,20 @@ def test_coerce_general_empty():
     assert out["substages"] == [] and out["stages"] == [] and out["is_general"] is True
 
 
+def test_chunks_from_markers():
+    text = "Первый пункт про СИЗ и каску. Второй пункт про выдачу спецодежды на складе. Третий пункт про пожар."
+    # маркеры от модели — начала кусков (дословно из текста)
+    chunks = core.chunks_from_markers(text, ["Первый пункт про", "Второй пункт про", "Третий пункт про"])
+    assert len(chunks) == 3
+    assert chunks[0].startswith("Первый пункт") and chunks[1].startswith("Второй пункт")
+    assert "".join(chunks).replace(" ", "") == text.replace(" ", "")   # текст дословный, ничего не потеряно
+    # маркер не из текста -> пропущен; первый кусок с начала не теряется
+    one = core.chunks_from_markers(text, ["НЕТ ТАКОГО", "Третий пункт про"])
+    assert one and one[0].startswith("Первый пункт")
+    # пустые маркеры -> [] (вызывающий откатится на to_chunks)
+    assert core.chunks_from_markers(text, []) == []
+
+
 def test_stages_from_substages():
     assert core.stages_from_substages(["firstday.equipment", "training.shift"], STRUCTURE) == ["firstday", "training"]
     assert core.valid_substage_ids(STRUCTURE) == {"firstday.equipment", "firstday.rules", "training.shift"}

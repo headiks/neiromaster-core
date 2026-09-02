@@ -123,6 +123,42 @@ def to_chunks(text: str, min_tokens: int = 200, max_tokens: int = 400, overlap_s
     return chunks
 
 
+# ---------- Разбиение блока на чанки по маркерам от модели (ТЗ: чанки рекомендует LLM) ----------
+def chunks_from_markers(text: str, markers: list) -> list:
+    """Режет ИСХОДНЫЙ text по маркерам начала кусков (первые слова каждого чанка от модели).
+    Текст чанка — дословный срез исходника между маркерами (модель не переписывает текст,
+    только указывает границы). Маркер ищем по его первым ~40 символам от текущей позиции.
+    Возвращает [] если маркеры не сработали — вызывающий откатывается на to_chunks."""
+    text = text or ""
+    if not text.strip() or not markers:
+        return []
+    positions = []
+    cursor = 0
+    for m in markers:
+        probe = " ".join((m or "").split())[:40]      # нормализуем пробелы, берём начало
+        if not probe:
+            continue
+        idx = text.find(probe, cursor)
+        if idx == -1:
+            idx = text.find(probe[:20], cursor)        # запасной короткий якорь
+        if idx == -1:
+            continue
+        positions.append(idx)
+        cursor = idx + 1
+    positions = sorted(set(positions))
+    if not positions:
+        return []
+    if positions[0] != 0:
+        positions.insert(0, 0)                          # хвост до первого маркера не теряем
+    out = []
+    for i, p in enumerate(positions):
+        end = positions[i + 1] if i + 1 < len(positions) else len(text)
+        piece = text[p:end].strip()
+        if piece:
+            out.append(piece)
+    return out
+
+
 # ---------- Модель плана: подэтапы -> этапы ----------
 def substage_parent_map(structure: dict) -> dict:
     """{substage_id: stage_id} по структуре плана {stages:[{id, substages:[{id}...]}]}."""
