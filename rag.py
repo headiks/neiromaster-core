@@ -40,7 +40,9 @@ GREETING_PHRASES = [
 RAG_KEYWORDS = [
     "отпуск", "высота", "инструктаж", "техника безопасности", "охрана труда",
     "смена", "регламент", "правила", "норма", "требование", "обязан",
-    "положено", "разрешается", "запрещается", "инструкция", "порядок"
+    "положено", "разрешается", "запрещается", "инструкция", "порядок",
+    # первая помощь как ТЕМА (информационный вопрос) — не ЧС; острые ЧС ловит detect_emergency
+    "первая помощь", "первой помощи", "первую помощь", "оказани",
 ]
 
 def is_greeting_or_general(text):
@@ -312,11 +314,16 @@ def route_question(question):
     raw = small_llm(CLASSIFY_SYSTEM, question, step_name="CLASSIFY")
     try:
         data = parse_json_response(raw)
-        result = {
-            "route": data.get("route", "rag"),
-            "risk_flag": data.get("risk_flag", False),
-            "risk_type": data.get("risk_type"),
-        }
+        route = data.get("route", "rag")
+        # Настоящие ЧС уже отловлены регэксом detect_emergency ДО классификации. Поэтому
+        # "escalate" от малой модели здесь = ложное срабатывание на ИНФОРМАЦИОННОМ вопросе
+        # (напр. «при каких состояниях оказывать первую помощь» — это вопрос ПРО правила, а
+        # не сообщение о ЧП). Такое отвечаем через RAG; если ответа нет — уйдёт человеку по
+        # «нет ответа». Эскалацию решают регэкс ЧС + пустой ответ, а не тематика вопроса.
+        if route == "escalate":
+            log("CLASSIFY", "escalate от LLM понижен до rag (реальные ЧС ловит регэкс)")
+            route = "rag"
+        result = {"route": route, "risk_flag": False, "risk_type": None}
         log("CLASSIFY", f"Результат: {result}")
         return result
     except Exception as e:
