@@ -26,6 +26,10 @@
   details { margin-top:8px; } summary { cursor:pointer; font-size:14px; color:#3b82f6; }
   .chunk { border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; margin:6px 0; font-size:13px; white-space:pre-wrap; background:#fff; }
   .h2 { font-size:18px; margin:0 0 6px; }
+  .vec { background:#f8fafc; border:1px dashed #cbd5e1; border-radius:6px; padding:8px 10px; margin:8px 0; font-size:13px; }
+  .vecprev { font-family:Consolas,monospace; font-size:12px; color:#475569; word-break:break-all; margin:4px 0; }
+  .meta-row { font-size:13px; color:#475569; margin:4px 0; }
+  .meta-row b { color:#334155; }
 </style>
 </head>
 <body>
@@ -46,6 +50,13 @@
 <script>
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
 function api(u,o){return fetch(u,o).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
+function vecHtml(v){
+  if(!v) return '<span class="muted">вектор недоступен</span>';
+  const prev=(v.preview||[]).map(x=>x.toFixed(3)).join(', ');
+  return `<div class="vec"><b>Вектор:</b> модель ${esc(v.model||'bge-m3')}, размерность ${v.dim}, норма ${v.norm}
+    <div class="vecprev">[${esc(prev)}${(v.dim>16)?', …':''}]</div>
+    <div class="muted">Это семантический эмбеддинг текста (${v.dim} чисел). По косинусной близости этого вектора к вектору вопроса идёт поиск в RAG.</div></div>`;
+}
 
 // список документов, размеченных docpipe
 api('/documents/labeled').then(r=>r.json()).then(d=>{
@@ -86,6 +97,7 @@ function render(d){
     h+=`<div class="card block ${junk?'junk':''}">
       <div class="h2">Блок ${i+1}${s.heading_path&&s.heading_path.length?': '+esc(s.heading_path.join(' / ')):''}
         ${s.page?`<span class="muted">стр. ${esc(s.page)}</span>`:''}</div>`;
+    h+=`<div class="meta-row"><b>ID блока:</b> ${esc(s.section_id||'')} · <b>источник метки:</b> ${esc(s.source||'—')} · <b>чанков:</b> ${(s.chunks||[]).length} · <b>содержательный:</b> ${s.is_meaningful===false?'нет':'да'}</div>`;
     if(junk){
       h+=`<div class="muted">Служебный фрагмент (не размечается): ${esc(s.reject_reason||'')}</div>`;
     } else {
@@ -99,7 +111,7 @@ function render(d){
       h+=`<div class="lbl">Подэтапы (может быть несколько)</div>`;
       h+= (s.substages||[]).length ? s.substages.map(su=>
             `<div><span class="chip sub">${esc(su.title||su.id)}</span>
-             <span class="muted">уверенность ${su.confidence!=null?Math.round(su.confidence*100)+'%':'—'}</span>
+             <span class="muted">уверенность ${su.confidence!=null?Math.round(su.confidence*100)+'%':'—'} · id ${esc(su.id||'')}</span>
              <div class="desc">${esc(su.description||'')}</div></div>`).join('')
           : '<span class="muted">—</span>';
 
@@ -114,15 +126,18 @@ function render(d){
       }
     }
 
-    // текст блока
-    h+=`<div class="lbl">Текст блока</div><div class="txt">${esc(s.text||'')}</div>`;
+    // текст блока + его вектор
+    h+=`<div class="lbl">Текст блока (кусок документа)</div><div class="txt">${esc(s.text||'')}</div>`;
+    h+= vecHtml(s.vector);
 
-    // чанки блока
+    // чанки блока — всегда видимы, каждый со своим вектором
     const ch=s.chunks||[];
-    h+=`<details><summary>Чанки блока (${ch.length}) — то, что идёт в RAG-поиск</summary>`;
-    h+= ch.length? ch.map((k,j)=>`<div class="chunk"><b>Чанк ${j+1}.</b> ${esc(k.text)}</div>`).join('')
+    h+=`<div class="lbl">Чанки этого блока (${ch.length}) — то, что идёт в RAG-поиск; метки наследуются от блока</div>`;
+    h+= ch.length? ch.map((k,j)=>
+          `<div class="chunk"><b>Чанк ${j+1}</b> <span class="muted">id ${esc(k.chunk_id||'')} · эмбеддинг ${esc(k.embedding_version||'')}</span>
+           <div style="margin-top:4px;">${esc(k.text)}</div>${vecHtml(k.vector)}</div>`).join('')
         : '<div class="muted">нет чанков (служебный блок)</div>';
-    h+=`</details></div>`;
+    h+=`</div>`;
   });
 
   document.getElementById('out').innerHTML=h;

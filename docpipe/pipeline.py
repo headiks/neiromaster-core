@@ -190,22 +190,35 @@ def document_breakdown(filename: str, plan_version: str = "current") -> dict:
             sub_lut[sub["id"]] = {"id": sub["id"], "title": sub.get("title", ""),
                                   "description": sub.get("description", ""), "stage_id": st["id"]}
 
+    rows = [dict(r) for r in store.sections_with_labels(doc["id"])]
+    # чанки каждой секции (с их PG-id для сопоставления с векторами Qdrant)
+    sec_chunks = {r["section_id"]: store.list_chunks(r["section_id"]) for r in rows}
+    all_chunk_ids = [c["id"] for chs in sec_chunks.values() for c in chs]
+    try:
+        sec_vecs, chunk_vecs = qdrant_sink.document_vectors(list(sec_chunks.keys()), all_chunk_ids)
+    except Exception:
+        sec_vecs, chunk_vecs = {}, {}   # Qdrant недоступен — разбор без векторов
+
     sections = []
-    for r in store.sections_with_labels(doc["id"]):
-        r = dict(r)
+    for r in rows:
         subs = []
         for s in (r.get("substages") or []):
             meta = sub_lut.get(s.get("id"), {"id": s.get("id"), "title": "", "description": ""})
             subs.append({**meta, "confidence": s.get("confidence")})
         stages = [stage_lut.get(sid, {"id": sid, "title": "", "description": ""})
                   for sid in (r.get("stages") or [])]
-        chunks = [{"seq": c["seq"], "text": c["text"]} for c in store.list_chunks(r["section_id"])]
+        chunks = [{"seq": c["seq"], "text": c["text"], "chunk_id": c["id"],
+                   "embedding_version": c.get("embedding_version"),
+                   "vector": chunk_vecs.get(c["id"])}
+                  for c in sec_chunks[r["section_id"]]]
         sections.append({
-            "seq": r["seq"], "heading_path": r.get("heading_path") or [], "page": r.get("page_from"),
+            "seq": r["seq"], "section_id": r["section_id"],
+            "heading_path": r.get("heading_path") or [], "page": r.get("page_from"),
             "text": r.get("text") or "", "is_meaningful": r.get("is_meaningful"),
             "reject_reason": r.get("reject_reason"), "is_general": r.get("is_general"),
             "why": r.get("why"), "professions": r.get("professions") or [],
             "prof_conf": r.get("prof_conf"), "source": r.get("source"),
+            "vector": sec_vecs.get(r["section_id"]),
             "substages": subs, "stages": stages, "chunks": chunks,
         })
     return {"filename": filename, "doc_card": doc.get("doc_card") or {}, "sections": sections}
