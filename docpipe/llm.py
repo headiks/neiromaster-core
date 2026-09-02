@@ -21,6 +21,8 @@ _HEAD_TOKENS = 3000   # сколько начала документа отда�
 # при дефолтном num_ctx (2–4k) это молча обрезается и метки едут. Расширяем.
 # ponytail: на CPU большой ctx тормозит — потолок кладём через env, дефолт с запасом под блок 1800т.
 NUM_CTX = int(os.environ.get("NEIROMASTER_DOCPIPE_NUM_CTX", "8192"))
+# Обрезка фрагмента блока в промпте: под крупный блок (SECTION_MAX_TOKENS). ~3 символа/токен.
+FRAGMENT_MAX_CHARS = int(os.environ.get("NEIROMASTER_DOCPIPE_FRAGMENT_CHARS", "24000"))
 
 
 def _chat(system: str, user: str, schema: dict) -> dict:
@@ -123,6 +125,6 @@ def section_labels(section_text: str, heading_path: list, card: dict,
         f"Путь заголовков: {' / '.join(heading_path or []) or '—'}\n"
         f"Должности компании: {', '.join(positions) or '—'}\n\n"
         f"Подэтапы плана:\n{_plan_lines(structure)}\n\n"
-        f"Фрагмент:\n{(section_text or '')[:9000]}"
+        f"Фрагмент:\n{(section_text or '')[:FRAGMENT_MAX_CHARS]}"
     )
     return _chat(SECTION_SYSTEM, user, SECTION_SCHEMA)
