@@ -500,7 +500,9 @@ def rerank(question, candidates):
     for idx, c in enumerate(candidates):
         fragment = c["payload"]["text"]
         prompt = f'Вопрос: "{question}"\nФрагмент: "{fragment}"'
-        raw = small_llm(RERANK_SYSTEM, prompt, step_name=f"RERANK_{idx+1}")
+        # Реранкер — большая модель (qwen3:14b): 3B занижала релевантные фрагменты, из-за чего
+        # ответ уходил в эскалацию даже когда нужный документ в базе. 14B судит точнее.
+        raw = big_llm(RERANK_SYSTEM, prompt)
         relevance = None
         # Пытаемся извлечь JSON
         try:
