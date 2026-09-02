@@ -6,15 +6,24 @@
 Публичный API: ingest, reindex, relabel_candidates, retrieve, enqueue, worker управление.
 """
 
+import os
 import time
 import queue
 import hashlib
 import threading
 from pathlib import Path
 
+from docling.chunking import HybridChunker
+
 from config import get_embedding
 from . import core, llm, store, professions, qdrant_sink
 from .qdrant_sink import EMBED_VERSION
+
+# Блоки (секции) для разметки делаем КРУПНЕЕ, чем эмбеддинг-чанки indexing (512 токенов):
+# у docpipe своя задача — дать LLM связный кусок с контекстом, а не короткий вектор.
+# merge_peers склеивает соседние мелкие фрагменты одного уровня заголовков.
+SECTION_MAX_TOKENS = int(os.environ.get("NEIROMASTER_DOCPIPE_SECTION_TOKENS", "1800"))
+_section_chunker = HybridChunker(max_tokens=SECTION_MAX_TOKENS, merge_peers=True)
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -29,12 +38,13 @@ def _parse(filepath: Path):
     import docling
     doc = indexing.convert_document(filepath)
 
-    # Секции = чанки HybridChunker (уже сгруппированы по заголовкам), при необходимости дробим.
+    # Секции = крупные чанки (свой HybridChunker на SECTION_MAX_TOKENS, не 512 от indexing),
+    # сгруппированы по заголовкам; очень крупные при необходимости дробим по предложениям.
     sections = []
-    for ch in indexing.chunker.chunk(doc):
+    for ch in _section_chunker.chunk(doc):
         heading_path = [h for h in (getattr(ch.meta, "headings", None) or []) if h]
         page = indexing.extract_page_no(ch)
-        for piece in core.split_section_text(ch.text, max_tokens=1200):
+        for piece in core.split_section_text(ch.text, max_tokens=SECTION_MAX_TOKENS):
             sections.append({"heading_path": heading_path, "text": piece,
                              "page_from": page, "page_to": page})
 

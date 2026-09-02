@@ -4,6 +4,7 @@ LLM-слой (Ollama, 14B): два прохода разметки со СТРО
 ответа делает core.coerce_section_labels (проход 2) и professions.match_to_staffing.
 """
 
+import os
 import json
 import requests
 
@@ -11,10 +12,15 @@ from config import OLLAMA_URL
 
 MODEL = "qwen3:14b"
 SEED = 7
-TIMEOUT = 300
-PROMPT_VERSION = "docpipe-2"   # v2: строгая селективность подэтапов (порог+кап в core)
+TIMEOUT = 600
+PROMPT_VERSION = "docpipe-3"   # v3: крупные блоки + расширенный контекст модели (num_ctx)
 
 _HEAD_TOKENS = 3000   # сколько начала документа отдаём в проход 1 (≈ символов * 3)
+
+# Контекст модели. Промпт разметки = полный каталог подэтапов (большой) + крупный фрагмент,
+# при дефолтном num_ctx (2–4k) это молча обрезается и метки едут. Расширяем.
+# ponytail: на CPU большой ctx тормозит — потолок кладём через env, дефолт с запасом под блок 1800т.
+NUM_CTX = int(os.environ.get("NEIROMASTER_DOCPIPE_NUM_CTX", "8192"))
 
 
 def _chat(system: str, user: str, schema: dict) -> dict:
@@ -23,7 +29,7 @@ def _chat(system: str, user: str, schema: dict) -> dict:
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "stream": False, "think": False,
         "format": schema,                                  # структурированный вывод (JSON schema)
-        "options": {"temperature": 0, "seed": SEED},
+        "options": {"temperature": 0, "seed": SEED, "num_ctx": NUM_CTX},
     }, timeout=TIMEOUT)
     r.raise_for_status()
     content = r.json()["message"]["content"]
@@ -117,6 +123,6 @@ def section_labels(section_text: str, heading_path: list, card: dict,
         f"Путь заголовков: {' / '.join(heading_path or []) or '—'}\n"
         f"Должности компании: {', '.join(positions) or '—'}\n\n"
         f"Подэтапы плана:\n{_plan_lines(structure)}\n\n"
-        f"Фрагмент:\n{(section_text or '')[:6000]}"
+        f"Фрагмент:\n{(section_text or '')[:9000]}"
     )
     return _chat(SECTION_SYSTEM, user, SECTION_SCHEMA)
