@@ -599,7 +599,7 @@
             <h3 style="margin:0;" id="substage-map-title">Куски документа по подэтапам</h3>
             <button class="ghost-btn" onclick="document.getElementById('substage-map-dialog').close()">Закрыть</button>
         </div>
-        <div class="stage-hint" style="margin-top:8px;">Каждый кусок текста показан с подэтапами, к которым он отнесён, и уверенностью (косинус к смыслу подэтапа). Низкая уверенность → вероятно, попал ошибочно.</div>
+        <div class="stage-hint" style="margin-top:8px;">Каждый кусок текста показан с подэтапами, к которым он отнесён, и уверенностью. Метод указан вверху списка: точная разметка (LLM) или приблизительная косинусная оценка. Низкая уверенность → вероятно, попал ошибочно.</div>
         <div id="substage-map-body" style="margin-top:12px;max-height:74vh;overflow:auto;"></div>
     </dialog>
 
@@ -884,22 +884,66 @@
             const body = document.getElementById('substage-map-body');
             body.innerHTML = '<div class="empty-hint">Загрузка…</div>';
             dlg.showModal();
-            api(`/documents/${encodeURIComponent(filename)}/substage-map`).then(r => r.ok ? r.json() : null).then(d => {
-                if (!d || !(d.chunks || []).length) { body.innerHTML = '<div class="empty-hint">Нет данных по кускам текста.</div>'; return; }
-                body.innerHTML = d.chunks.map((c, i) => {
-                    const sec = `Кусок ${i + 1}${c.section ? ' · ' + escapeHtml(c.section) : ''}${c.page != null ? ' · стр. ' + c.page : ''}`;
-                    if (c.meaningful === false) {
-                        return `<div class="smap-chunk smap-junk"><div class="smap-sec">${sec} · служебный текст (в подэтапы не идёт)</div>`
-                             + `<div class="txt">${escapeHtml((c.text || '').slice(0, 400))}</div></div>`;
-                    }
-                    const chips = (c.matches || []).map(m =>
-                        `<span class="smap-chip ${smapClass(m.score)}" title="Критерий подэтапа: ${escapeHtml(m.brief || '—')}">`
-                        + `${escapeHtml(m.stage_title)} → ${escapeHtml(m.title)} <small>${Number(m.score).toFixed(2)}</small></span>`).join('');
-                    const subs = chips ? `<div class="smap-subs">${chips}</div>` : '<div class="smap-none">— ни одному подэтапу не соответствует —</div>';
-                    return `<div class="smap-chunk"><div class="smap-sec">${sec}</div>`
-                         + `<div class="txt">${escapeHtml((c.text || '').slice(0, 600))}</div>${subs}</div>`;
-                }).join('');
-            }).catch(() => { body.innerHTML = '<div class="empty-hint">Ошибка загрузки.</div>'; });
+            // Сначала — ТОЧНАЯ разметка docpipe (LLM: подэтапы с уверенностью и обоснованием).
+            // Если документ ею ещё не размечен (404) — фолбэк на приблизительную косинусную оценку.
+            api(`/documents/${encodeURIComponent(filename)}/labels`)
+                .then(r => r.status === 404 ? null : (r.ok ? r.json() : Promise.reject(new Error('labels'))))
+                .then(d => {
+                    if (d) { renderDocpipeMap(body, d, filename); return; }
+                    return api(`/documents/${encodeURIComponent(filename)}/substage-map`)
+                        .then(r => r.ok ? r.json() : null).then(cd => renderCosineMap(body, cd));
+                })
+                .catch(() => { body.innerHTML = '<div class="empty-hint">Ошибка загрузки.</div>'; });
+        }
+
+        function renderDocpipeMap(body, d, filename) {
+            const secs = d.sections || [];
+            const note = `<div class="plan-note" style="margin-bottom:10px;"><i data-lucide="scan-text"></i>
+                Точная разметка (LLM, temp=0). Подробнее — с векторами и чанками — на странице
+                <a href="/doc-breakdown">Разбор документа</a>.</div>`;
+            if (!secs.length) { body.innerHTML = note + '<div class="empty-hint">Документ размечен, но блоков нет.</div>'; refreshIcons(); return; }
+            body.innerHTML = note + secs.map((s, i) => {
+                const head = `Кусок ${i + 1}${(s.heading_path && s.heading_path.length) ? ' · ' + escapeHtml(s.heading_path.join(' / ')) : ''}${s.page != null ? ' · стр. ' + s.page : ''}`;
+                if (s.is_meaningful === false) {
+                    return `<div class="smap-chunk smap-junk"><div class="smap-sec">${head} · служебный текст (в подэтапы не идёт)</div>`
+                         + `<div class="txt">${escapeHtml((s.text || '').slice(0, 400))}</div></div>`;
+                }
+                let chips;
+                if (s.is_general) {
+                    chips = `<span class="smap-chip hi">общий для всех</span>`;
+                } else {
+                    chips = (s.substages || []).map(su =>
+                        `<span class="smap-chip ${smapClass(su.confidence)}" title="${escapeHtml(su.description || '')}">`
+                        + `${escapeHtml((s.stages[0] && s.stages[0].title) || '')} → ${escapeHtml(su.title || su.id)} `
+                        + `<small>${su.confidence != null ? Math.round(su.confidence * 100) + '%' : ''}</small></span>`).join('');
+                }
+                const subs = chips ? `<div class="smap-subs">${chips}</div>` : '<div class="smap-none">— ни одному подэтапу не соответствует —</div>';
+                const prof = s.is_general ? '' : ((s.professions || []).length ? `<div class="smap-sec">Профессии: ${escapeHtml(s.professions.join(', '))}</div>` : '');
+                const why = s.why ? `<div class="smap-sec" style="color:#1e40af;">Почему: ${escapeHtml(s.why)}</div>` : '';
+                return `<div class="smap-chunk"><div class="smap-sec">${head}</div>`
+                     + `<div class="txt">${escapeHtml((s.text || '').slice(0, 600))}</div>${subs}${prof}${why}</div>`;
+            }).join('');
+            refreshIcons();
+        }
+
+        function renderCosineMap(body, d) {
+            const note = `<div class="plan-note" style="margin-bottom:10px;"><i data-lucide="info"></i>
+                Приблизительная косинусная оценка — документ ещё не размечён точным разбором (docpipe). Загрузите его заново для точной разметки.</div>`;
+            if (!d || !(d.chunks || []).length) { body.innerHTML = note + '<div class="empty-hint">Нет данных по кускам текста.</div>'; refreshIcons(); return; }
+            body.innerHTML = note + d.chunks.map((c, i) => {
+                const sec = `Кусок ${i + 1}${c.section ? ' · ' + escapeHtml(c.section) : ''}${c.page != null ? ' · стр. ' + c.page : ''}`;
+                if (c.meaningful === false) {
+                    return `<div class="smap-chunk smap-junk"><div class="smap-sec">${sec} · служебный текст (в подэтапы не идёт)</div>`
+                         + `<div class="txt">${escapeHtml((c.text || '').slice(0, 400))}</div></div>`;
+                }
+                const chips = (c.matches || []).map(m =>
+                    `<span class="smap-chip ${smapClass(m.score)}" title="Критерий подэтапа: ${escapeHtml(m.brief || '—')}">`
+                    + `${escapeHtml(m.stage_title)} → ${escapeHtml(m.title)} <small>${Number(m.score).toFixed(2)}</small></span>`).join('');
+                const subs = chips ? `<div class="smap-subs">${chips}</div>` : '<div class="smap-none">— ни одному подэтапу не соответствует —</div>';
+                return `<div class="smap-chunk"><div class="smap-sec">${sec}</div>`
+                     + `<div class="txt">${escapeHtml((c.text || '').slice(0, 600))}</div>${subs}</div>`;
+            }).join('');
+            refreshIcons();
         }
 
         function renderFolders() {
