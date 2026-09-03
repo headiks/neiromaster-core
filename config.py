@@ -55,9 +55,14 @@ DATA_DIR = BASE_DIR / "data"
 
 # Локальная загрузка .env (без зависимостей): построчно KEY=VALUE. НЕ перетирает уже
 # заданные переменные окружения (env приоритетнее файла) — на сервере их обычно задаёт
-# systemd, тогда .env можно не держать. .env в .gitignore, секреты в git не попадают.
-_env_file = BASE_DIR / ".env"
-if _env_file.exists():
+# systemd, тогда файл можно не держать. Файлы в .gitignore, секреты в git не попадают.
+# Грузим и .env.production (на нём же работает systemd-сервис), чтобы CLI-скрипты
+# (provisioning, storage, migrate) видели те же секреты S3/БД, что и приложение —
+# .env.production берёт верх над .env.
+for _name in (".env.production", ".env"):
+    _env_file = BASE_DIR / _name
+    if not _env_file.exists():
+        continue
     for _line in _env_file.read_text(encoding="utf-8").splitlines():
         _line = _line.strip()
         if not _line or _line.startswith("#") or "=" not in _line:
