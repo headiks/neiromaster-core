@@ -13,8 +13,12 @@ QDRANT = f"http://{QDRANT_HOST}:{QDRANT_PORT}"   # хост/порт Qdrant — 
 COLLECTION = "reglaments"
 SMALL_MODEL = "qwen2.5:3b"      # для скорости, но можно поставить 7b для точности
 BIG_MODEL = "qwen3:14b"
+BIG_NUM_CTX = int(os.environ.get("NEIROMASTER_RAG_NUM_CTX", "16384"))   # контекст под генерацию/реранк
 CONFIDENCE_THRESHOLD = 0.55
-MAX_CONTEXT_FRAGMENTS = 3
+# Сколько фрагментов уходит в генерацию. Для «списочных» вопросов (перечень состояний,
+# набор требований) ответ разбросан по нескольким чанкам — при 3 фрагментах модель видит
+# только отсылку («см. приложение»), а не сам список. Даём больше.
+MAX_CONTEXT_FRAGMENTS = int(os.environ.get("NEIROMASTER_MAX_CONTEXT_FRAGMENTS", "8"))
 HISTORY_WINDOW = 3   # сколько последних вопросов пользователя учитывать при разрешении контекста
 # Подробный лог пайплайна: промпты, сырые ответы моделей, тексты вопросов. По умолчанию
 # ВЫКЛ — в проде он шумный и может писать в логи чувствительные данные (содержимое
@@ -36,7 +40,9 @@ GREETING_PHRASES = [
 RAG_KEYWORDS = [
     "отпуск", "высота", "инструктаж", "техника безопасности", "охрана труда",
     "смена", "регламент", "правила", "норма", "требование", "обязан",
-    "положено", "разрешается", "запрещается", "инструкция", "порядок"
+    "положено", "разрешается", "запрещается", "инструкция", "порядок",
+    # первая помощь как ТЕМА (информационный вопрос) — не ЧС; острые ЧС ловит detect_emergency
+    "первая помощь", "первой помощи", "первую помощь", "оказани",
 ]
 
 def is_greeting_or_general(text):
@@ -118,7 +124,10 @@ def big_llm(system, user):
         ],
         "stream": False,
         "think": False,
-        "options": {"num_keep": 0, "temperature": 0},   # детерминированный вывод (ТЗ 1.6)
+        # num_ctx фиксируем: иначе Ollama берёт дефолт (мал) и обрезает 8 фрагментов + соседей;
+        # держим общий с docpipe, чтобы модель не перегружалась на другой контекст.
+        # seed — воспроизводимость: один и тот же вопрос даёт один и тот же ответ.
+        "options": {"num_keep": 0, "temperature": 0, "num_ctx": BIG_NUM_CTX, "seed": 7},
     }, timeout=BIG_LLM_TIMEOUT)
     r.raise_for_status()
     response = r.json()["message"]["content"]
@@ -305,11 +314,16 @@ def route_question(question):
     raw = small_llm(CLASSIFY_SYSTEM, question, step_name="CLASSIFY")
     try:
         data = parse_json_response(raw)
-        result = {
-            "route": data.get("route", "rag"),
-            "risk_flag": data.get("risk_flag", False),
-            "risk_type": data.get("risk_type"),
-        }
+        route = data.get("route", "rag")
+        # Настоящие ЧС уже отловлены регэксом detect_emergency ДО классификации. Поэтому
+        # "escalate" от малой модели здесь = ложное срабатывание на ИНФОРМАЦИОННОМ вопросе
+        # (напр. «при каких состояниях оказывать первую помощь» — это вопрос ПРО правила, а
+        # не сообщение о ЧП). Такое отвечаем через RAG; если ответа нет — уйдёт человеку по
+        # «нет ответа». Эскалацию решают регэкс ЧС + пустой ответ, а не тематика вопроса.
+        if route == "escalate":
+            log("CLASSIFY", "escalate от LLM понижен до rag (реальные ЧС ловит регэкс)")
+            route = "rag"
+        result = {"route": route, "risk_flag": False, "risk_type": None}
         log("CLASSIFY", f"Результат: {result}")
         return result
     except Exception as e:
@@ -424,13 +438,38 @@ def fetch_neighbors(source, chunk_index, span=1):
         return []
 
 
-def cascade_search(question, current_stage_ids=None, limit=8, position=None):
+HYDE_SYSTEM = """Напиши короткий правдоподобный фрагмент внутреннего регламента (2–4 предложения),
+который бы отвечал на вопрос. Перечисли вероятные пункты, состояния, термины по теме своими
+словами. Не выдумывай точные номера статей и приложений. Верни только текст, без пояснений."""
+
+
+def hyde_query(question):
+    """HyDE: гипотетический ответ модели. Вопрос вроде «перечень состояний» вектором далёк от
+    самого списка («отсутствие сознания, кровотечения…»), а придуманный ответ содержит те же
+    слова и подтягивает нужные чанки. Большая модель (14b): малая (3b) на КАПС-заголовках и
+    формальных формулировках выдаёт бред, из-за чего список не подтягивается. Сбой — исходный вопрос."""
+    try:
+        hyp = (big_llm(HYDE_SYSTEM, question) or "").strip()
+        return hyp or question
+    except Exception:
+        return question
+
+
+def cascade_search(question, current_stage_ids=None, limit=14, position=None):
     """L1 релевантные папки -> L3 папки текущего этапа -> L4 вся база. Приоритет —
     свежесть документа, текущий этап и должность сотрудника (буст, не жёсткий фильтр —
     ТЗ §6, §24). position — должность сотрудника из профиля (приоритет по профессии чанка)."""
     matched = classify.match_folders(question, top_k=3, threshold=QUESTION_ROUTE_THRESHOLD)
     folder_slugs = [m[0] for m in matched]
     cands = search(question, limit=limit, folder_slugs=folder_slugs or None)
+
+    # HyDE: добираем кандидатов по вектору гипотетического ответа — закрывает семантический
+    # разрыв «вопрос про перечень» vs «сам перечень пунктов» (списочные/перечислительные вопросы).
+    # Ищем по ВСЕЙ базе (без фильтра папок): нужный список часто лежит в другой папке/приложении,
+    # чем отсылочная фраза. Шум отсекает реранкер (14b) — низкая релевантность не попадёт в ответ.
+    hyp = hyde_query(question)
+    if hyp and hyp != question:
+        cands = _merge(cands, search(hyp, limit=limit, folder_slugs=None))
 
     if len(cands) < RETRIEVE_MIN and current_stage_ids:
         stage_folders = _folders_for_stages(current_stage_ids)
@@ -500,7 +539,9 @@ def rerank(question, candidates):
     for idx, c in enumerate(candidates):
         fragment = c["payload"]["text"]
         prompt = f'Вопрос: "{question}"\nФрагмент: "{fragment}"'
-        raw = small_llm(RERANK_SYSTEM, prompt, step_name=f"RERANK_{idx+1}")
+        # Реранкер — большая модель (qwen3:14b): 3B занижала релевантные фрагменты, из-за чего
+        # ответ уходил в эскалацию даже когда нужный документ в базе. 14B судит точнее.
+        raw = big_llm(RERANK_SYSTEM, prompt)
         relevance = None
         # Пытаемся извлечь JSON
         try:
@@ -547,10 +588,30 @@ def rerank(question, candidates):
 GENERATE_SYSTEM = """
 Ты — ассистент по внутренним регламентам завода.
 Отвечай на вопрос сотрудника, используя только предоставленный контекст.
-Если в контексте нет информации — скажи, что не знаешь, и предложи обратиться к специалисту.
-Отвечай кратко, по делу, на русском языке.
-Не рассуждай, не выводи свои мысли — дай только готовый ответ.
+Если в контексте есть конкретика, отвечающая на вопрос (перечень, список пунктов, состояния,
+шаги, требования, значения) — приведи её ПОЛНОСТЬЮ и по пунктам. Если в контексте несколько
+формулировок одного перечня, бери САМУЮ ПОДРОБНУЮ (нумерованный/пунктированный список пунктов),
+а не общую фразу-описание.
+ЗАПРЕЩЕНО отсылать к другому документу или приложению: НИКОГДА не пиши «приведён в приложении»,
+«см. приложение N…», «к настоящему Порядку» и подобное. Пользователь должен получить сам ответ,
+а не ссылку. Если самих пунктов в контексте нет — просто перечисли то, что есть.
+Если в контексте нет ответа — скажи, что не знаешь, и предложи обратиться к специалисту.
+Отвечай по делу, на русском языке. Не рассуждай, не выводи свои мысли — дай только готовый ответ.
 """
+
+# Страховка поверх промпта: детерминированно вырезаем из ответа отсылочные фразы к документу/
+# приложению (модель иногда их дописывает вопреки инструкции). Пользователь хочет сам ответ.
+_DOC_REF_RE = re.compile(
+    r"[^.!?\n]*(?:приведён[а-я]*\s+в\s+приложени|указан[а-я]*\s+в\s+приложени|"
+    r"см\.?\s*приложени|в\s+приложении\s*[NN№]|к\s+настоящему\s+Порядку|"
+    r"согласно\s+приложени|в\s+соответствии\s+с\s+приложени)[^.!?\n]*[.!?]?",
+    re.IGNORECASE)
+
+
+def _strip_doc_refs(text: str) -> str:
+    out = _DOC_REF_RE.sub("", text or "")
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 def generate_answer(question, context_fragments):
     log("GENERATE", f"Генерация ответа с использованием {len(context_fragments)} фрагментов")
@@ -558,6 +619,7 @@ def generate_answer(question, context_fragments):
     user_prompt = f"Вопрос: {question}\n\nКонтекст:\n{context_text}"
     log("GENERATE", f"Сформирован промпт для большой модели:\n{user_prompt}")
     answer = big_llm(GENERATE_SYSTEM, user_prompt)
+    answer = _strip_doc_refs(answer)          # убираем отсылки «см. приложение», если проскочили
     log("GENERATE", f"Сгенерированный ответ: {answer}")
     return answer
 
@@ -653,7 +715,9 @@ def handle_question(question, history=None, current_stage_ids=None, position=Non
     for cand in candidates[:MAX_CONTEXT_FRAGMENTS]:
         pl = cand.get("payload") or {}
         if pl.get("text") in top_fragments:
-            for neigh in fetch_neighbors(pl.get("source"), pl.get("chunk_index")):
+            # span=4: перечни/приложения разбиты на несколько соседних чанков — берём широко,
+            # чтобы в контекст попал ВЕСЬ список, даже если найден только его фрагмент.
+            for neigh in fetch_neighbors(pl.get("source"), pl.get("chunk_index"), span=4):
                 if neigh and neigh not in context_fragments:
                     context_fragments.append(neigh)
 

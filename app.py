@@ -599,6 +599,16 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
     job = indexing.enqueue_document(filepath)
+
+    # Точная разметка docpipe (двухпроходная LLM: карточка документа -> метки секций
+    # по этапам/подэтапам/профессиям). Идёт параллельно фолдер-индексации для RAG.
+    # Сбой разметки не должен блокировать загрузку/RAG.
+    try:
+        import docpipe
+        job["label_job_id"] = docpipe.enqueue(filepath, file.filename)
+    except Exception as e:
+        print(f"[DOCPIPE] не удалось поставить разметку в очередь: {e}")
+        job["label_job_id"] = None
     return JSONResponse(status_code=202, content=job)
 
 
@@ -650,6 +660,46 @@ async def get_document_job(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     return job
+
+
+@app.get("/documents/label-jobs/{job_id}", dependencies=admin_only)
+async def get_label_job(job_id: str):
+    """Статус фоновой LLM-разметки docpipe (проход по секциям, возобновляемый)."""
+    import docpipe
+    job = docpipe.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Задача разметки не найдена")
+    return dict(job)
+
+
+@app.get("/documents/labeled", dependencies=admin_only)
+async def list_labeled_documents():
+    """Имена документов, размеченных docpipe (для просмотрщика разбора)."""
+    import docpipe.store as dstore
+    return {"documents": dstore.list_documents()}
+
+
+@app.get("/documents/{filename}/labels", dependencies=admin_only)
+async def get_document_labels(filename: str):
+    """Полный разбор документа (docpipe): карточка документа + блоки (секции) с текстом,
+    метками (этапы/подэтапы/профессии), обоснованием «почему», названиями и описаниями
+    этапов/подэтапов, и чанками каждого блока. Источник правды по разметке (LLM, temp=0)."""
+    import docpipe
+    data = docpipe.document_breakdown(filename)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Документ не размечен docpipe (загрузите заново или дождитесь разметки)")
+    return data
+
+
+@app.get("/doc-breakdown", response_class=HTMLResponse)
+async def doc_breakdown_page(request: Request):
+    """Страница просмотра разбора документа (блоки → чанки, метки, обоснования)."""
+    user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if not users.is_admin(user):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(_read_static("doc_breakdown.html"))
 
 
 @app.get("/documents/{filename}/chunks", dependencies=admin_only)

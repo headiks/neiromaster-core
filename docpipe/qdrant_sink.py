@@ -4,6 +4,7 @@ level = section | chunk. В payload только фильтруемое (пра�
 в PG). reindex() строит её заново; retrieve() выбирает секции под подэтап и должность.
 """
 
+import math
 import uuid
 
 from qdrant_client import QdrantClient
@@ -37,6 +38,33 @@ _INDEXES = {
 
 def _uuid(kind: str, key: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{kind}-{key}"))
+
+
+def _vec_stats(vec) -> dict:
+    """Компактная сводка вектора чанка/секции: размерность, норма, первые значения.
+    Полный вектор из 1024 чисел в UI не нужен — для инспекции достаточно превью."""
+    vec = list(vec or [])
+    norm = math.sqrt(sum(v * v for v in vec)) if vec else 0.0
+    return {"dim": len(vec), "norm": round(norm, 4),
+            "preview": [round(float(v), 4) for v in vec[:16]], "model": EMBED_VERSION}
+
+
+def document_vectors(section_ids: list, chunk_ids: list) -> tuple:
+    """({section_id: stats}, {chunk_id: stats}) — векторы секций и чанков документа из Qdrant.
+    Один retrieve по вычисленным point-id (см. _uuid)."""
+    ids = [_uuid("section", s) for s in section_ids] + [_uuid("chunk", c) for c in chunk_ids]
+    if not ids:
+        return {}, {}
+    recs = client.retrieve(COLLECTION, ids=ids, with_vectors=True, with_payload=True)
+    sec_stats, ch_stats = {}, {}
+    for r in recs:
+        pl = r.payload or {}
+        st = _vec_stats(r.vector)
+        if pl.get("level") == "section" and pl.get("section_id"):
+            sec_stats[pl["section_id"]] = st
+        elif pl.get("level") == "chunk" and pl.get("chunk_id"):
+            ch_stats[pl["chunk_id"]] = st
+    return sec_stats, ch_stats
 
 
 def _ensure_collection(recreate: bool = False):

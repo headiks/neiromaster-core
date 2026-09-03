@@ -4,6 +4,7 @@ LLM-слой (Ollama, 14B): два прохода разметки со СТРО
 ответа делает core.coerce_section_labels (проход 2) и professions.match_to_staffing.
 """
 
+import os
 import json
 import requests
 
@@ -11,10 +12,18 @@ from config import OLLAMA_URL
 
 MODEL = "qwen3:14b"
 SEED = 7
-TIMEOUT = 300
-PROMPT_VERSION = "docpipe-1"
+TIMEOUT = 600
+PROMPT_VERSION = "docpipe-4"   # v4: модель сама рекомендует границы чанков (chunks-маркеры)
 
 _HEAD_TOKENS = 3000   # сколько начала документа отдаём в проход 1 (≈ символов * 3)
+
+# Контекст модели. Промпт разметки = полный каталог подэтапов (большой) + крупный фрагмент,
+# при дефолтном num_ctx (2–4k) это молча обрезается и метки едут. Расширяем.
+# ponytail: на CPU большой ctx тормозит — потолок кладём через env, дефолт с запасом под блок 1800т.
+NUM_CTX = int(os.environ.get("NEIROMASTER_DOCPIPE_NUM_CTX", "8192"))
+# Сколько символов фрагмента блока отдаём модели в промпте (должно вмещать крупный блок
+# SECTION_MAX_TOKENS; ~3 символа на токен). Настраивается тем же env, что и на сервере.
+FRAGMENT_CHARS = int(os.environ.get("NEIROMASTER_DOCPIPE_FRAGMENT_CHARS", "24000"))
 
 
 def _chat(system: str, user: str, schema: dict) -> dict:
@@ -23,7 +32,7 @@ def _chat(system: str, user: str, schema: dict) -> dict:
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "stream": False, "think": False,
         "format": schema,                                  # структурированный вывод (JSON schema)
-        "options": {"temperature": 0, "seed": SEED},
+        "options": {"temperature": 0, "seed": SEED, "num_ctx": NUM_CTX},
     }, timeout=TIMEOUT)
     r.raise_for_status()
     content = r.json()["message"]["content"]
@@ -73,8 +82,9 @@ SECTION_SCHEMA = {
         "professions": {"type": "array", "items": {"type": "string"}},
         "is_general": {"type": "boolean"},
         "why": {"type": "string"},
+        "chunks": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["is_meaningful", "substages", "professions", "is_general", "why"],
+    "required": ["is_meaningful", "substages", "professions", "is_general", "why", "chunks"],
 }
 
 SECTION_SYSTEM = """Ты размечаешь ФРАГМЕНТ внутреннего документа относительно плана адаптации.
@@ -82,19 +92,28 @@ SECTION_SYSTEM = """Ты размечаешь ФРАГМЕНТ внутренн�
 (с id и описанием) и список должностей компании.
 
 Правила:
-- substages — подэтапы, содержанию которых фрагмент реально соответствует. Бери id ТОЛЬКО из
-  списка. Может быть НЕСКОЛЬКО подэтапов или НИ ОДНОГО. confidence — уверенность 0..1.
+- substages — ТОЛЬКО те подэтапы, содержанию которых фрагмент ПРЯМО соответствует. Бери id
+  ТОЛЬКО из списка. БУДЬ СТРОГ: выбери НЕ БОЛЕЕ 3–4 подэтапов, обычно 0–2. НЕ перечисляй
+  весь список и НЕ выстраивай убывающий рейтинг — если сомневаешься, НЕ включай подэтап.
+  confidence — честная уверенность совпадения 0..1 (НЕ порядковый номер); ставь < 0.6 только
+  тем, кого реально не уверен — их лучше вообще не включать. Много подэтапов = ошибка.
 - professions — должности из списка, для которых фрагмент специфичен. Если фрагмент годится
   всем — professions пустой, is_general=true.
 - is_meaningful=false, если фрагмент служебный (заголовок, номер, оглавление) без содержания.
 - why — одно короткое предложение-обоснование.
+- chunks — как разбить ЭТОТ фрагмент на логически завершённые куски для поиска. Верни массив,
+  где каждый элемент — ДОСЛОВНО первые 6–10 слов очередного куска (маркер начала; скопируй из
+  текста без изменений, ничего не сокращай и не перефразируй). Первый маркер — самое начало
+  фрагмента. Кусок = законченная по смыслу единица, несущая информацию (правило, процедура,
+  определение, перечень); не разрывай мысль, предложение или таблицу посередине. Обычно 1–6
+  кусков. Если фрагмент цельный — один маркер (начало фрагмента).
 Этапы НЕ указывай — они выводятся из подэтапов. Отвечай строго по схеме, по-русски.
 
 Пример пустого ответа (фрагмент ни к чему не подходит):
-{"is_meaningful": true, "substages": [], "professions": [], "is_general": true, "why": "Общее вводное положение без привязки к подэтапу."}
+{"is_meaningful": true, "substages": [], "professions": [], "is_general": true, "why": "Общее вводное положение без привязки к подэтапу.", "chunks": ["Общие положения настоящего документа устанавливают"]}
 
 Пример с тремя метками:
-{"is_meaningful": true, "substages": [{"id":"safety.ppe","confidence":0.9},{"id":"firstday.equipment","confidence":0.7},{"id":"training.shift","confidence":0.6}], "professions": ["водитель"], "is_general": false, "why": "Нормы выдачи и применения СИЗ для водителя на смене."}"""
+{"is_meaningful": true, "substages": [{"id":"safety.ppe","confidence":0.9},{"id":"firstday.equipment","confidence":0.7},{"id":"training.shift","confidence":0.6}], "professions": ["водитель"], "is_general": false, "why": "Нормы выдачи и применения СИЗ для водителя на смене.", "chunks": ["Каждый работник обязан использовать", "Выдача спецодежды и обуви производится"]}"""
 
 
 def _plan_lines(structure: dict) -> str:
@@ -114,6 +133,6 @@ def section_labels(section_text: str, heading_path: list, card: dict,
         f"Путь заголовков: {' / '.join(heading_path or []) or '—'}\n"
         f"Должности компании: {', '.join(positions) or '—'}\n\n"
         f"Подэтапы плана:\n{_plan_lines(structure)}\n\n"
-        f"Фрагмент:\n{(section_text or '')[:6000]}"
+        f"Фрагмент:\n{(section_text or '')[:FRAGMENT_CHARS]}"
     )
     return _chat(SECTION_SYSTEM, user, SECTION_SCHEMA)

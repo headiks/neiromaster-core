@@ -6,6 +6,7 @@
 Публичный API: ingest, reindex, relabel_candidates, retrieve, enqueue, worker управление.
 """
 
+import os
 import time
 import queue
 import hashlib
@@ -15,6 +16,24 @@ from pathlib import Path
 from config import get_embedding
 from . import core, llm, store, professions, qdrant_sink
 from .qdrant_sink import EMBED_VERSION
+
+# Блоки (секции) для разметки делаем КРУПНЕЕ, чем эмбеддинг-чанки indexing (512 токенов):
+# у docpipe своя задача — дать LLM связный кусок с контекстом, а не короткий вектор.
+# merge_peers склеивает соседние мелкие фрагменты одного уровня заголовков.
+SECTION_MAX_TOKENS = int(os.environ.get("NEIROMASTER_DOCPIPE_SECTION_TOKENS", "1800"))
+# Верхний предел размера чанка: сверх него режем по предложениям (окно эмбеддера bge-m3 ~4096).
+CHUNK_MAX_TOKENS = int(os.environ.get("NEIROMASTER_DOCPIPE_CHUNK_MAX_TOKENS", "1200"))
+_section_chunker = None
+
+
+def _get_section_chunker():
+    """Ленивая инициализация: docling импортируем только при реальном разборе документа,
+    чтобы `import docpipe` (core/store/тесты) не требовал тяжёлый docling."""
+    global _section_chunker
+    if _section_chunker is None:
+        from docling.chunking import HybridChunker
+        _section_chunker = HybridChunker(max_tokens=SECTION_MAX_TOKENS, merge_peers=True)
+    return _section_chunker
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -29,12 +48,13 @@ def _parse(filepath: Path):
     import docling
     doc = indexing.convert_document(filepath)
 
-    # Секции = чанки HybridChunker (уже сгруппированы по заголовкам), при необходимости дробим.
+    # Секции = крупные чанки (свой HybridChunker на SECTION_MAX_TOKENS, не 512 от indexing),
+    # сгруппированы по заголовкам; очень крупные при необходимости дробим по предложениям.
     sections = []
-    for ch in indexing.chunker.chunk(doc):
+    for ch in _get_section_chunker().chunk(doc):
         heading_path = [h for h in (getattr(ch.meta, "headings", None) or []) if h]
         page = indexing.extract_page_no(ch)
-        for piece in core.split_section_text(ch.text, max_tokens=1200):
+        for piece in core.split_section_text(ch.text, max_tokens=SECTION_MAX_TOKENS):
             sections.append({"heading_path": heading_path, "text": piece,
                              "page_from": page, "page_to": page})
 
@@ -75,6 +95,7 @@ def _label_section(sec: dict, repeated: set, card: dict, structure: dict, positi
     norm["is_general"] = norm["is_general"] and not matched
     norm["prof_conf"] = prof_conf
     norm["reject_reason"] = None
+    norm["chunk_markers"] = raw.get("chunks") or []   # рекомендация модели, как резать на чанки
     return norm
 
 
@@ -110,7 +131,16 @@ def ingest(filepath, filename: str = None, plan_version: str = "current",
         label = _label_section(sec, repeated, card, structure, positions)
         store.upsert_section_label(sid, label, source="llm", plan_version=plan_version,
                                    model=llm.MODEL, prompt_version=llm.PROMPT_VERSION)
-        store.replace_chunks(sid, core.to_chunks(sec["text"]), EMBED_VERSION)
+        # Чанки — по рекомендации модели (логически завершённые куски); текст режем из
+        # исходника по маркерам. Не сработало — детерминированный фолбэк по предложениям.
+        chunks = core.chunks_from_markers(sec["text"], label.get("chunk_markers")) or core.to_chunks(sec["text"])
+        # Страховка: слишком крупный логический кусок не влезет в окно эмбеддера (bge-m3, ~4096)
+        # и обрежется. Такой дорезаем по предложениям; остальные оставляем как задумала модель.
+        # ponytail: потолок = окно эмбеддинга; env NEIROMASTER_DOCPIPE_CHUNK_MAX_TOKENS.
+        capped = []
+        for c in chunks:
+            capped.extend(core.to_chunks(c) if core.est_tokens(c) > CHUNK_MAX_TOKENS else [c])
+        store.replace_chunks(sid, capped or chunks, EMBED_VERSION)
         store.update_job(job_id, done=seq + 1, last_seq=seq)
 
     qdrant_sink.sink_document(doc_id)                  # запись производной копии в Qdrant
@@ -172,6 +202,56 @@ def _doc_card_for(doc_id: str) -> dict:
 
 def retrieve(substage_id: str, position: str = "", plan_version: str = "current", limit: int = 8) -> list:
     return qdrant_sink.retrieve(substage_id, position, plan_version, limit)
+
+
+def document_breakdown(filename: str, plan_version: str = "current") -> dict:
+    """Полный разбор документа для просмотра человеком: карточка документа + блоки (секции)
+    с их метками, обоснованием и НАЗВАНИЯМИ/ОПИСАНИЯМИ этапов и подэтапов + чанки блока.
+    None — если документ ещё не размечен docpipe."""
+    doc = store.find_by_filename(filename)
+    if not doc:
+        return None
+    structure = store.get_plan_structure(plan_version)
+    stage_lut, sub_lut = {}, {}
+    for st in structure.get("stages") or []:
+        stage_lut[st["id"]] = {"id": st["id"], "title": st.get("title", ""),
+                               "description": st.get("description", "")}
+        for sub in st.get("substages") or []:
+            sub_lut[sub["id"]] = {"id": sub["id"], "title": sub.get("title", ""),
+                                  "description": sub.get("description", ""), "stage_id": st["id"]}
+
+    rows = [dict(r) for r in store.sections_with_labels(doc["id"])]
+    # чанки каждой секции (с их PG-id для сопоставления с векторами Qdrant)
+    sec_chunks = {r["section_id"]: store.list_chunks(r["section_id"]) for r in rows}
+    all_chunk_ids = [c["id"] for chs in sec_chunks.values() for c in chs]
+    try:
+        sec_vecs, chunk_vecs = qdrant_sink.document_vectors(list(sec_chunks.keys()), all_chunk_ids)
+    except Exception:
+        sec_vecs, chunk_vecs = {}, {}   # Qdrant недоступен — разбор без векторов
+
+    sections = []
+    for r in rows:
+        subs = []
+        for s in (r.get("substages") or []):
+            meta = sub_lut.get(s.get("id"), {"id": s.get("id"), "title": "", "description": ""})
+            subs.append({**meta, "confidence": s.get("confidence")})
+        stages = [stage_lut.get(sid, {"id": sid, "title": "", "description": ""})
+                  for sid in (r.get("stages") or [])]
+        chunks = [{"seq": c["seq"], "text": c["text"], "chunk_id": c["id"],
+                   "embedding_version": c.get("embedding_version"),
+                   "vector": chunk_vecs.get(c["id"])}
+                  for c in sec_chunks[r["section_id"]]]
+        sections.append({
+            "seq": r["seq"], "section_id": r["section_id"],
+            "heading_path": r.get("heading_path") or [], "page": r.get("page_from"),
+            "text": r.get("text") or "", "is_meaningful": r.get("is_meaningful"),
+            "reject_reason": r.get("reject_reason"), "is_general": r.get("is_general"),
+            "why": r.get("why"), "professions": r.get("professions") or [],
+            "prof_conf": r.get("prof_conf"), "source": r.get("source"),
+            "vector": sec_vecs.get(r["section_id"]),
+            "substages": subs, "stages": stages, "chunks": chunks,
+        })
+    return {"filename": filename, "doc_card": doc.get("doc_card") or {}, "sections": sections}
 
 
 # ---------- Асинхронная очередь разметки (retry + backoff + возобновление) ----------

@@ -73,21 +73,49 @@ def test_coerce_drops_unknown_and_coerces_conf():
     raw = {"is_meaningful": True,
            "substages": [{"id": "firstday.equipment", "confidence": "0.8"},
                          {"id": "NETU", "confidence": 0.9},          # нет в плане -> отбросить
-                         {"id": "training.shift", "confidence": 5}], # >1 -> clamp
+                         {"id": "firstday.rules", "confidence": 0.3}, # < порога -> отбросить
+                         {"id": "training.shift", "confidence": 5}], # >1 -> clamp до 1.0
            "professions": ["водитель"], "is_general": False, "why": "x"}
     out = core.coerce_section_labels(raw, STRUCTURE)
     ids = [s["id"] for s in out["substages"]]
-    assert ids == ["firstday.equipment", "training.shift"]           # NETU выкинут
-    assert out["substages"][0]["confidence"] == 0.8
-    assert out["substages"][1]["confidence"] == 1.0                  # clamp
+    # NETU выкинут (нет в плане), firstday.rules выкинут (< SUBSTAGE_MIN_CONF); отсортировано по уверенности
+    assert ids == ["training.shift", "firstday.equipment"]
+    assert out["substages"][0]["confidence"] == 1.0                  # clamp
+    assert out["substages"][1]["confidence"] == 0.8
     assert set(out["stages"]) == {"firstday", "training"}            # этапы из подэтапов
     assert out["is_general"] is False and out["professions"] == ["водитель"]
+
+
+def test_coerce_caps_substage_count():
+    # На «свалке» из многих подэтапов держим не больше SUBSTAGE_MAX, только уверенные.
+    raw = {"is_meaningful": True,
+           "substages": [{"id": "firstday.equipment", "confidence": 0.9},
+                         {"id": "firstday.rules", "confidence": 0.8},
+                         {"id": "training.shift", "confidence": 0.65}],
+           "professions": [], "is_general": True, "why": ""}
+    out = core.coerce_section_labels(raw, STRUCTURE)
+    assert len(out["substages"]) <= core.SUBSTAGE_MAX
+    assert all(s["confidence"] >= core.SUBSTAGE_MIN_CONF for s in out["substages"])
 
 
 def test_coerce_general_empty():
     out = core.coerce_section_labels({"is_meaningful": True, "substages": [], "professions": [],
                                       "is_general": True, "why": ""}, STRUCTURE)
     assert out["substages"] == [] and out["stages"] == [] and out["is_general"] is True
+
+
+def test_chunks_from_markers():
+    text = "Первый пункт про СИЗ и каску. Второй пункт про выдачу спецодежды на складе. Третий пункт про пожар."
+    # маркеры от модели — начала кусков (дословно из текста)
+    chunks = core.chunks_from_markers(text, ["Первый пункт про", "Второй пункт про", "Третий пункт про"])
+    assert len(chunks) == 3
+    assert chunks[0].startswith("Первый пункт") and chunks[1].startswith("Второй пункт")
+    assert "".join(chunks).replace(" ", "") == text.replace(" ", "")   # текст дословный, ничего не потеряно
+    # маркер не из текста -> пропущен; первый кусок с начала не теряется
+    one = core.chunks_from_markers(text, ["НЕТ ТАКОГО", "Третий пункт про"])
+    assert one and one[0].startswith("Первый пункт")
+    # пустые маркеры -> [] (вызывающий откатится на to_chunks)
+    assert core.chunks_from_markers(text, []) == []
 
 
 def test_stages_from_substages():

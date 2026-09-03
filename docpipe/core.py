@@ -123,6 +123,42 @@ def to_chunks(text: str, min_tokens: int = 200, max_tokens: int = 400, overlap_s
     return chunks
 
 
+# ---------- Разбиение блока на чанки по маркерам от модели (ТЗ: чанки рекомендует LLM) ----------
+def chunks_from_markers(text: str, markers: list) -> list:
+    """Режет ИСХОДНЫЙ text по маркерам начала кусков (первые слова каждого чанка от модели).
+    Текст чанка — дословный срез исходника между маркерами (модель не переписывает текст,
+    только указывает границы). Маркер ищем по его первым ~40 символам от текущей позиции.
+    Возвращает [] если маркеры не сработали — вызывающий откатывается на to_chunks."""
+    text = text or ""
+    if not text.strip() or not markers:
+        return []
+    positions = []
+    cursor = 0
+    for m in markers:
+        probe = " ".join((m or "").split())[:40]      # нормализуем пробелы, берём начало
+        if not probe:
+            continue
+        idx = text.find(probe, cursor)
+        if idx == -1:
+            idx = text.find(probe[:20], cursor)        # запасной короткий якорь
+        if idx == -1:
+            continue
+        positions.append(idx)
+        cursor = idx + 1
+    positions = sorted(set(positions))
+    if not positions:
+        return []
+    if positions[0] != 0:
+        positions.insert(0, 0)                          # хвост до первого маркера не теряем
+    out = []
+    for i, p in enumerate(positions):
+        end = positions[i + 1] if i + 1 < len(positions) else len(text)
+        piece = text[p:end].strip()
+        if piece:
+            out.append(piece)
+    return out
+
+
 # ---------- Модель плана: подэтапы -> этапы ----------
 def substage_parent_map(structure: dict) -> dict:
     """{substage_id: stage_id} по структуре плана {stages:[{id, substages:[{id}...]}]}."""
@@ -150,9 +186,18 @@ def stages_from_substages(substage_ids, structure: dict) -> list:
 
 
 # ---------- Валидация/нормализация ответа модели (проход 2) ----------
+# Селективность подэтапов: модель на большом каталоге склонна вываливать почти весь список
+# с убывающей уверенностью вместо выбора. Держим только уверенные и немного.
+# ponytail: порог+кап — эвристика; настоящий потолок в том, что часть подэтапов каталога —
+# это процессные шаги адаптации (тест, встреча с наставником), а не темы контента, поэтому
+# документ-регламент к ним и не должен относиться. Порог поднять/опустить по калибровке.
+SUBSTAGE_MIN_CONF = 0.6   # ниже — не привязываем
+SUBSTAGE_MAX = 5          # максимум подэтапов на блок
+
+
 def coerce_section_labels(raw: dict, structure: dict) -> dict:
     """Приводит сырой JSON модели к нормализованной метке секции.
-    - substages: оставляем только id, существующие в плане; confidence -> float 0..1;
+    - substages: только валидные id с confidence >= SUBSTAGE_MIN_CONF, топ-SUBSTAGE_MAX по уверенности;
     - stages выводятся из подэтапов (не из ответа модели);
     - professions — как есть (матч со штаткой делает вызывающий слой, эмбеддингом);
     - is_meaningful/is_general/why нормализуются.
@@ -174,7 +219,11 @@ def coerce_section_labels(raw: dict, structure: dict) -> dict:
                 c = float(conf)
             except (TypeError, ValueError):
                 c = 1.0
-            subs.append({"id": sid, "confidence": max(0.0, min(1.0, c))})
+            c = max(0.0, min(1.0, c))
+            if c >= SUBSTAGE_MIN_CONF:
+                subs.append({"id": sid, "confidence": c})
+    subs.sort(key=lambda x: x["confidence"], reverse=True)
+    subs = subs[:SUBSTAGE_MAX]
 
     professions = [str(p).strip() for p in (raw.get("professions") or []) if str(p).strip()]
     is_general = bool(raw.get("is_general")) or (not professions and not raw.get("professions"))
