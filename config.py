@@ -53,6 +53,18 @@ class FileGuard:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
+# Локальная загрузка .env (без зависимостей): построчно KEY=VALUE. НЕ перетирает уже
+# заданные переменные окружения (env приоритетнее файла) — на сервере их обычно задаёт
+# systemd, тогда .env можно не держать. .env в .gitignore, секреты в git не попадают.
+_env_file = BASE_DIR / ".env"
+if _env_file.exists():
+    for _line in _env_file.read_text(encoding="utf-8").splitlines():
+        _line = _line.strip()
+        if not _line or _line.startswith("#") or "=" not in _line:
+            continue
+        _k, _, _v = _line.partition("=")
+        os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+
 # data/documents/<topic_slug>/<файл>   — оригиналы, разложенные по темам (папкам)
 # data/converted/<topic_slug>/<файл>.md — то же самое в виде markdown (таблицы читаемы для ИИ)
 # data/processed/<hash>.json            — кэш разобранного docling-документа (техническое, для ускорения повторной обработки)
@@ -66,6 +78,19 @@ for d in (DOCS_DIR, CONVERTED_DIR, CACHE_DIR):
 
 SUPPORTED_EXT = {".pdf", ".docx", ".doc", ".pptx", ".html", ".htm", ".md", ".txt"}
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 МБ на файл
+
+# S3-совместимое хранилище оригиналов (Timeweb и т.п.). Если заданы и endpoint, и
+# bucket — оригиналы дублируются в S3, а data/documents/ работает как локальный кэш
+# (его можно очистить и восстановить из S3, см. storage.py). Производные (converted/,
+# processed/) остаются локальными — они регенерируются из оригинала.
+# ВАЖНО: ключи берутся ТОЛЬКО из окружения, в код и git не попадают.
+S3_ENDPOINT = os.environ.get("NEIROMASTER_S3_ENDPOINT", "")
+S3_BUCKET   = os.environ.get("NEIROMASTER_S3_BUCKET", "")
+S3_KEY      = os.environ.get("NEIROMASTER_S3_KEY", "")
+S3_SECRET   = os.environ.get("NEIROMASTER_S3_SECRET", "")
+S3_REGION   = os.environ.get("NEIROMASTER_S3_REGION", "ru-1")
+S3_PREFIX   = os.environ.get("NEIROMASTER_S3_PREFIX", "documents/")  # префикс ключей в бакете
+S3_ENABLED  = bool(S3_ENDPOINT and S3_BUCKET)
 
 QDRANT_HOST = "localhost"
 QDRANT_PORT = 6333

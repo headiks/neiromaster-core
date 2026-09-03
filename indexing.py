@@ -43,6 +43,7 @@ from docling_core.types.doc.document import DoclingDocument
 import classify
 import folders
 import documents
+import storage
 from config import (
     DOCS_DIR, CONVERTED_DIR, CACHE_DIR, REGISTRY_PATH,
     SUPPORTED_EXT, MAX_UPLOAD_BYTES,
@@ -206,6 +207,7 @@ def convert_document(filepath: Path) -> DoclingDocument:
     при повторной обработке того же файла (переезд между папками, смена
     параметров чанкинга) можно переиспользовать готовую структуру документа.
     """
+    storage.pull(filepath)   # если локальной копии нет — тянем оригинал из S3
     cache_path = CACHE_DIR / f"{filepath.stem}__{file_hash(filepath)}.json"
     if cache_path.exists():
         return DoclingDocument.load_from_json(str(cache_path))
@@ -760,6 +762,7 @@ def delete_document(filename: str, remove_file: bool = True) -> bool:
     if entry and remove_file:
         rel_path = entry.get("path", filename)
         filepath = DOCS_DIR / rel_path
+        storage.delete(rel_path)   # убираем оригинал из S3 (no-op, если S3 выключен)
         if filepath.exists():
             filepath.unlink()
             for cache_file in CACHE_DIR.glob(f"{filepath.stem}__*.json"):
@@ -824,6 +827,7 @@ def save_uploaded_file(filename: str, content: bytes) -> Path:
     filepath = DOCS_DIR / filename
     with open(filepath, "wb") as f:
         f.write(content)
+    storage.put(filename, content)   # дублируем оригинал в S3 (no-op, если S3 выключен)
 
     _update_registry(
         filename,

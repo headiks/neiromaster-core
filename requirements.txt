@@ -9,3 +9,4 @@ psycopg_pool>=3.2
 cryptography>=42.0        # шифрование ПДн в БД (Fernet), только если задан NEIROMASTER_PII_KEY
 openpyxl>=3.1             # чтение xlsx (штатное расписание -> профили сотрудников)
 xlrd>=2.0.1               # чтение старого .xls (Excel 97-2003)
+boto3>=1.34               # S3-совместимое хранилище оригиналов, только если задан NEIROMASTER_S3_ENDPOINT
