@@ -64,6 +64,41 @@ def delete(filename: str):
         _s3().delete_object(Bucket=config.S3_BUCKET, Key=_key(filename))
 
 
+def list_objects(prefix: str = "", delimiter: str = "/", max_keys: int = 1000) -> dict:
+    """Листинг бакета для просмотра (только метаданные, без содержимого файлов).
+    delimiter='/' — «папки» (CommonPrefixes) + файлы текущего уровня, как файловый браузер;
+    delimiter='' — рекурсивно все ключи под prefix. Возвращает и endpoint/bucket, чтобы
+    страница показывала, на каком сервере лежит хранилище."""
+    base = {"enabled": config.S3_ENABLED, "bucket": config.S3_BUCKET,
+            "endpoint": config.S3_ENDPOINT, "region": config.S3_REGION,
+            "prefix": prefix, "folders": [], "files": [], "count": 0,
+            "total_size": 0, "truncated": False}
+    if not config.S3_ENABLED:
+        return base
+    kw = {"Bucket": config.S3_BUCKET, "Prefix": prefix, "MaxKeys": max_keys}
+    if delimiter:
+        kw["Delimiter"] = delimiter
+    r = _s3().list_objects_v2(**kw)
+    base["folders"] = [
+        {"prefix": cp["Prefix"], "name": cp["Prefix"][len(prefix):].rstrip("/")}
+        for cp in r.get("CommonPrefixes", [])
+    ]
+    files = []
+    for o in r.get("Contents", []):
+        key = o["Key"]
+        if key == prefix:                       # сам маркер «папки» файлом не показываем
+            continue
+        lm = o.get("LastModified")
+        files.append({"key": key, "name": key[len(prefix):],
+                      "size": o.get("Size", 0),
+                      "last_modified": lm.isoformat() if lm else ""})
+    base["files"] = files
+    base["count"] = len(files)
+    base["total_size"] = sum(f["size"] for f in files)
+    base["truncated"] = bool(r.get("IsTruncated"))
+    return base
+
+
 def check():
     """Проверка доступа к бакету: `python storage.py --check`."""
     if not config.S3_ENABLED:
