@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S3-хранилище — НейроМастер</title>
+<style>
+  body{font-family:'Segoe UI',Tahoma,sans-serif;max-width:1000px;margin:24px auto;padding:16px;background:#f5f7fa;color:#1e293b}
+  .head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #3b82f6;padding-bottom:10px;gap:12px;flex-wrap:wrap}
+  h1{font-size:22px;margin:0}
+  a.link,button.btn{border:1px solid #cbd5e1;border-radius:8px;padding:7px 13px;background:#fff;cursor:pointer;font-size:14px;text-decoration:none;color:#475569;font-family:inherit}
+  button.btn:hover,a.link:hover{background:#f1f5f9}
+  .meta{color:#64748b;font-size:13px;margin:10px 0 0}
+  .meta code{background:#eef3f8;color:#0e7490;padding:1px 6px;border-radius:5px;font-family:Consolas,monospace}
+  .banner{background:#fef9c3;border:1px solid #fde68a;color:#854d0e;border-radius:10px;padding:12px 14px;margin:16px 0;font-size:14px}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.05);margin:16px 0;overflow:hidden}
+  .toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid #e2e8f0;background:#fafbfc}
+  .crumbs{font-size:14px;color:#475569;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .crumbs a{color:#2563eb;text-decoration:none;cursor:pointer}
+  .crumbs a:hover{text-decoration:underline}
+  .crumbs .sep{color:#94a3b8}
+  label.rec{margin-left:auto;font-size:13px;color:#475569;display:flex;align-items:center;gap:6px;cursor:pointer}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:9px 16px;border-bottom:1px solid #eef2f6}
+  th{background:#f8fafc;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;font-weight:600}
+  td.size,th.size{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  tr.folder td{cursor:pointer}
+  tr.folder:hover td{background:#f0f7ff}
+  .ic{margin-right:8px}
+  .name{font-family:Consolas,monospace;font-size:13.5px}
+  .foot{display:flex;justify-content:space-between;padding:11px 16px;color:#64748b;font-size:13px;background:#fafbfc;border-top:1px solid #e2e8f0}
+  .empty{padding:26px 16px;color:#94a3b8;text-align:center}
+  .muted{color:#94a3b8}
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>🗂️ S3-хранилище оригиналов</h1>
+    <a class="link" href="/admin">← Админка</a>
+  </div>
+  <div class="meta" id="target">Загрузка…</div>
+
+  <div id="out"></div>
+
+<script>
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+function api(u){return fetch(u).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r.json();});}
+function fmtSize(n){ if(n==null)return '—'; const u=['Б','КБ','МБ','ГБ','ТБ']; let i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return (i?v.toFixed(1):v)+' '+u[i]; }
+function fmtDate(s){ if(!s)return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+
+let state={prefix:'',recursive:false};
+
+function crumbs(prefix){
+  const parts=prefix.split('/').filter(Boolean);
+  let acc='';
+  let html=`<a onclick="go('')">bucket</a>`;
+  for(const p of parts){ acc+=p+'/'; const a=acc; html+=`<span class="sep">/</span><a onclick="go('${esc(a)}')">${esc(p)}</a>`; }
+  return html;
+}
+
+function go(prefix){ state.prefix=prefix; load(); }
+function toggleRec(el){ state.recursive=el.checked; if(state.recursive) state.prefix=state.prefix; load(); }
+
+function load(){
+  const out=document.getElementById('out');
+  out.innerHTML='<div class="card"><div class="empty">Загрузка…</div></div>';
+  const q=`/api/s3/list?prefix=${encodeURIComponent(state.prefix)}&recursive=${state.recursive}`;
+  api(q).then(d=>{
+    document.getElementById('target').innerHTML = d.enabled
+      ? `Хранилище: <code>${esc(d.endpoint||'—')}</code> · бакет <code>${esc(d.bucket||'—')}</code> · регион <code>${esc(d.region||'—')}</code>`
+      : `S3 не настроен на этом сервере.`;
+    if(!d.enabled){
+      out.innerHTML=`<div class="banner">S3 выключен (не заданы <code>NEIROMASTER_S3_ENDPOINT</code> / <code>NEIROMASTER_S3_BUCKET</code>). Оригиналы хранятся только локально в <code>data/documents/</code>. Задайте переменные окружения S3 на сервере приложения — хранилище может быть на другом сервере.</div>`;
+      return;
+    }
+    render(d);
+  }).catch(e=>{ out.innerHTML=`<div class="banner">Ошибка листинга: ${esc(e.message)}</div>`; });
+}
+
+function render(d){
+  const folders=d.folders||[], files=d.files||[];
+  let rows='';
+  if(!state.recursive){
+    rows += folders.map(f=>`<tr class="folder" onclick="go('${esc(f.prefix)}')">
+      <td><span class="ic">📁</span><span class="name">${esc(f.name)}/</span></td>
+      <td class="size muted">папка</td><td class="muted">—</td></tr>`).join('');
+  }
+  rows += files.map(f=>`<tr>
+      <td><span class="ic">📄</span><span class="name">${esc(f.name)}</span></td>
+      <td class="size">${fmtSize(f.size)}</td>
+      <td>${fmtDate(f.last_modified)}</td></tr>`).join('');
+  if(!rows) rows=`<tr><td colspan="3" class="empty">Пусто в этом префиксе.</td></tr>`;
+
+  document.getElementById('out').innerHTML=`
+    <div class="card">
+      <div class="toolbar">
+        <div class="crumbs">${crumbs(d.prefix)}</div>
+        <label class="rec"><input type="checkbox" ${state.recursive?'checked':''} onchange="toggleRec(this)"> рекурсивно</label>
+        <button class="btn" onclick="load()">Обновить</button>
+      </div>
+      <table>
+        <thead><tr><th>Ключ</th><th class="size">Размер</th><th>Изменён</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="foot">
+        <span>${state.recursive?'файлов (рекурсивно)':'папок '+folders.length+' · файлов'}: ${files.length}</span>
+        <span>суммарно: <b>${fmtSize(d.total_size)}</b>${d.truncated?' · показаны первые 1000':''}</span>
+      </div>
+    </div>`;
+}
+
+load();
+</script>
+</body>
+</html>

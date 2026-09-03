@@ -6,15 +6,15 @@ stages.py — этапы обучения (блоки) и подэтапы: «с
 служит целью для связей смысловых папок (folders.stage_ids). Структурой управляет
 человек: создать / переименовать / удалить этап, менять порядок, править подэтапы.
 
-Хранилище — PostgreSQL (таблица stages). substages — JSONB-массив {id, title}.
+Хранилище — PostgreSQL: этап в таблице stages, подэтапы — в отдельной таблице
+substages (связь по stage_id, FK ON DELETE CASCADE). Наружу подэтапы отдаются в том
+же виде [{id, title}], что и раньше, поэтому читатели (planner, админка) не меняются.
 Стартовая структура заводится из data/knowledge_seed.json при пустой таблице.
 """
 
 import time
 import uuid
 from typing import Optional
-
-from psycopg.types.json import Json
 
 import db
 
@@ -39,23 +39,45 @@ def _subs(values) -> list:
     return out
 
 
-def _row(r: dict) -> dict:
+def _replace_substages(stage_id: str, values, now: str):
+    """Полная замена подэтапов этапа: удалить прежние строки, вставить нормализованные."""
+    db.execute("DELETE FROM substages WHERE stage_id = %s", (stage_id,))
+    for pos, s in enumerate(_subs(values)):
+        db.execute(
+            "INSERT INTO substages (id, stage_id, title, position, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (s["id"], stage_id, s["title"], pos, now, now),
+        )
+
+
+def _row(r: dict, substages: list) -> dict:
     return {
         "id": r["id"],
         "title": r["title"],
         "description": r.get("description") or "",
-        "substages": r.get("substages") or [],
+        "substages": substages,
         "position": r.get("position", 0),
     }
 
 
 def list_stages() -> list:
-    return [_row(r) for r in db.query("SELECT * FROM stages ORDER BY position, title")]
+    stages = db.query("SELECT * FROM stages ORDER BY position, title")
+    subs = db.query("SELECT id, stage_id, title FROM substages ORDER BY position, title")
+    by_stage: dict = {}
+    for s in subs:
+        by_stage.setdefault(s["stage_id"], []).append({"id": s["id"], "title": s["title"]})
+    return [_row(r, by_stage.get(r["id"], [])) for r in stages]
 
 
 def get_stage(stage_id: str) -> Optional[dict]:
     r = db.query("SELECT * FROM stages WHERE id = %s", (stage_id,), fetch="one")
-    return _row(r) if r else None
+    if not r:
+        return None
+    subs = db.query(
+        "SELECT id, title FROM substages WHERE stage_id = %s ORDER BY position, title",
+        (stage_id,),
+    )
+    return _row(r, [{"id": s["id"], "title": s["title"]} for s in subs])
 
 
 def _next_position() -> int:
@@ -71,15 +93,19 @@ def create_stage(title: str, description: str = "", substages: Optional[list] = 
     sid = (stage_id or "").strip() or f"stg{uuid.uuid4().hex[:8]}"
     now = _now()
     db.execute(
-        "INSERT INTO stages (id, title, description, substages, position, created_at, updated_at) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (sid, title, description or "", Json(_subs(substages)), _next_position(), now, now),
+        "INSERT INTO stages (id, title, description, position, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s)",
+        (sid, title, description or "", _next_position(), now, now),
     )
+    _replace_substages(sid, substages, now)
     return get_stage(sid)
 
 
 def update_stage(stage_id: str, **fields) -> Optional[dict]:
-    allowed = {"title", "description", "substages", "position"}
+    now = _now()
+    if fields.get("substages") is not None:
+        _replace_substages(stage_id, fields.pop("substages"), now)
+    allowed = {"title", "description", "position"}
     sets, params = [], []
     for key, value in fields.items():
         if key not in allowed or value is None:
@@ -88,22 +114,19 @@ def update_stage(stage_id: str, **fields) -> Optional[dict]:
             value = str(value).strip()
             if not value:
                 raise ValueError("Название этапа обязательно")
-        elif key == "substages":
-            value = Json(_subs(value))
         sets.append(f"{key} = %s")
         params.append(value)
-    if not sets:
-        return get_stage(stage_id)
-    sets.append("updated_at = %s")
-    params.append(_now())
-    params.append(stage_id)
-    db.execute(f"UPDATE stages SET {', '.join(sets)} WHERE id = %s", tuple(params))
+    if sets:
+        sets.append("updated_at = %s")
+        params.append(now)
+        params.append(stage_id)
+        db.execute(f"UPDATE stages SET {', '.join(sets)} WHERE id = %s", tuple(params))
     return get_stage(stage_id)
 
 
 def delete_stage(stage_id: str) -> bool:
     existed = get_stage(stage_id) is not None
-    db.execute("DELETE FROM stages WHERE id = %s", (stage_id,))
+    db.execute("DELETE FROM stages WHERE id = %s", (stage_id,))  # подэтапы уходят по FK CASCADE
     return existed
 
 
@@ -115,10 +138,11 @@ def seed_if_empty(items: list) -> int:
     for pos, s in enumerate(items or [], start=1):
         now = _now()
         db.execute(
-            "INSERT INTO stages (id, title, description, substages, position, created_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-            (s["id"], s["title"], s.get("description", ""), Json(_subs(s.get("substages"))), pos, now, now),
+            "INSERT INTO stages (id, title, description, position, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
+            (s["id"], s["title"], s.get("description", ""), pos, now, now),
         )
+        _replace_substages(s["id"], s.get("substages"), now)
         n += 1
     return n
 

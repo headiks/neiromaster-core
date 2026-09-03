@@ -296,6 +296,27 @@ async def admin_page(request: Request):
     return HTMLResponse(_read_static("admin.html"))
 
 
+@app.get("/s3", response_class=HTMLResponse)
+async def s3_page(request: Request):
+    """Обозреватель S3-хранилища оригиналов (только чтение, для админа)."""
+    user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
+    if user.get("must_change_credentials"):
+        return RedirectResponse(url="/setup", status_code=303)
+    if not users.is_admin(user):
+        return RedirectResponse(url="/", status_code=303)
+    return HTMLResponse(_read_static("s3_browser.html"))
+
+
+@app.get("/api/s3/list", dependencies=admin_only)
+async def api_s3_list(prefix: str = "", recursive: bool = False):
+    """Листинг бакета (метаданные): «папки» + файлы уровня, либо рекурсивно. Хранилище
+    может быть на другом сервере — endpoint/bucket отдаём в ответе."""
+    import storage
+    return storage.list_objects(prefix=prefix, delimiter=("" if recursive else "/"))
+
+
 @app.get("/documents-board", response_class=HTMLResponse)
 async def documents_board_page(request: Request):
     """Экран «этапы ↔ документы»: какие документы закреплены за этапами и подэтапами."""
