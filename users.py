@@ -256,22 +256,76 @@ def is_owner(user: dict) -> bool:
     return bool(user) and user.get("role") == ROLE_OWNER
 
 
+def dir_slug(user) -> str:
+    """
+    Имя ПАПКИ пользователя в хранилище оригиналов (S3). Логин уже ограничен набором
+    [a-z0-9._-] (normalize_username), поэтому безопасен как сегмент ключа и не даёт
+    выйти из своего префикса. Без логина — по id, чтобы папка была у любого владельца.
+    """
+    if not user:
+        return "_common"
+    name = user.get("username") or f"user-{str(user.get('id') or 'unknown')[:8]}"
+    # Страховка: логин уже нормализован, но id приходит извне — вычищаем всё,
+    # что не входит в разрешённый набор, чтобы «/» или «..» не увели из префикса.
+    safe = "".join(c if c in USERNAME_ALLOWED else "_" for c in name.lower())
+    return safe.strip(".") or "_common"
+
+
+def same_department(actor: dict, target: dict) -> bool:
+    """Один ли отдел. Пустой отдел у администратора не считается совпадением —
+    иначе «безотдельный» админ увидел бы всех, у кого отдел тоже не заполнен."""
+    dep = (actor.get("department") or "").strip().lower()
+    return bool(dep) and dep == (target.get("department") or "").strip().lower()
+
+
+def can_see_doc(actor: dict, doc: dict) -> bool:
+    """
+    Виден ли администратору документ. Суперадмин видит ВСЁ, что загрузили
+    администраторы; администратор — только свои загрузки. Документы без владельца
+    (залиты до разделения прав или через CLI) — только суперадмину.
+    """
+    if is_owner(actor):
+        return True
+    return bool(doc.get("uploaded_by")) and doc.get("uploaded_by") == actor.get("id")
+
+
+def visible_docs(actor: dict, docs: list) -> list:
+    return [d for d in docs if can_see_doc(actor, d)]
+
+
+def visible_users(actor: dict, all_users: list) -> list:
+    """
+    Кого администратор видит в списке людей.
+    Главный администратор — всех. Обычный администратор — только свой отдел
+    (и себя самого, даже если отдел ему не проставили).
+    """
+    if is_owner(actor):
+        return list(all_users)
+    return [u for u in all_users
+            if u.get("id") == actor.get("id") or same_department(actor, u)]
+
+
 def can_manage(actor: dict, target: dict) -> bool:
     """
     Кого актор вправе редактировать.
-    Главный администратор — всех. Обычный администратор — только сотрудников:
-    иначе он мог бы сбросить пароль другому администратору и обойти ограничения.
+    Главный администратор — всех. Обычный администратор — только сотрудников
+    СВОЕГО отдела (и себя): иначе он мог бы сбросить пароль другому администратору
+    и обойти ограничения, либо править людей чужого подразделения.
     """
     if not is_admin(actor) or not target:
         return False
     if is_owner(actor):
         return True
-    return target.get("role") == ROLE_EMPLOYEE
+    if target.get("id") == actor.get("id"):
+        return True
+    return target.get("role") == ROLE_EMPLOYEE and same_department(actor, target)
 
 
 def ensure_can_manage(actor: dict, target: dict):
     if not can_manage(actor, target):
-        raise PermissionError("Недостаточно прав: изменять администраторов может только главный администратор")
+        raise PermissionError(
+            "Недостаточно прав: администратор работает только с сотрудниками своего отдела, "
+            "остальное — у главного администратора")
 
 
 # ---------- Запись ----------
@@ -588,3 +642,27 @@ if __name__ == "__main__":
     os.environ.pop("NEIROMASTER_PII_KEY")
     assert _decrypt_field(_ct) == _ct        # без ключа не падаем, отдаём шифртекст
     print("OK: шифрование ПДн — round-trip, префикс, совместимость со старыми строками")
+
+    # Папки хранилища и видимость по отделу
+    assert dir_slug({"username": "ivanov", "id": "x"}) == "ivanov"
+    assert dir_slug({"id": "abcdef123456"}) == "user-abcdef12"
+    assert dir_slug(None) == "_common"
+    _owner = {"id": "o", "role": ROLE_OWNER, "department": ""}
+    _adm = {"id": "a", "role": ROLE_ADMIN, "department": "Логистика"}
+    _all = [_owner, _adm, {"id": "e1", "role": ROLE_EMPLOYEE, "department": "логистика"},
+            {"id": "e2", "role": ROLE_EMPLOYEE, "department": "Сварка"},
+            {"id": "e3", "role": ROLE_EMPLOYEE, "department": ""}]
+    assert len(visible_users(_owner, _all)) == 5
+    assert {u["id"] for u in visible_users(_adm, _all)} == {"a", "e1"}   # свой отдел + сам
+    assert {u["id"] for u in visible_users({"id": "a2", "role": ROLE_ADMIN, "department": ""}, _all)} == set()
+    # управление: свой отдел — да, чужой отдел и другой админ — нет, себя — да
+    assert can_manage(_adm, _all[2]) and not can_manage(_adm, _all[3])
+    assert not can_manage(_adm, {"id": "a9", "role": ROLE_ADMIN, "department": "Логистика"})
+    assert can_manage(_adm, _adm) and can_manage(_owner, _all[3])
+    # документы: свои — да, чужие и «ничьи» — только суперадмину
+    _docs = [{"filename": "own.pdf", "uploaded_by": "a"},
+             {"filename": "alien.pdf", "uploaded_by": "a2"},
+             {"filename": "legacy.pdf"}]
+    assert [d["filename"] for d in visible_docs(_adm, _docs)] == ["own.pdf"]
+    assert len(visible_docs(_owner, _docs)) == 3
+    print("OK: dir_slug, видимость людей и документов, управление по отделу")

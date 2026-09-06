@@ -48,13 +48,23 @@ function api(u){return fetch(u).then(r=>{if(r.status===401){location.href='/logi
 function fmtSize(n){ if(n==null)return '—'; const u=['Б','КБ','МБ','ГБ','ТБ']; let i=0,v=n; while(v>=1024&&i<u.length-1){v/=1024;i++;} return (i?v.toFixed(1):v)+' '+u[i]; }
 function fmtDate(s){ if(!s)return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
 
-let state={prefix:'',recursive:false};
+// home — префикс, выше которого пускать нельзя: у суперадмина пустой (весь бакет),
+// у обычного администратора это его папка <суперадмин>/<админ>/. Приходит с сервера,
+// который и так подменяет чужой префикс на свой — здесь только убираем ссылки «вверх».
+let state={prefix:'',recursive:false,home:''};
 
 function crumbs(prefix){
   const parts=prefix.split('/').filter(Boolean);
   let acc='';
-  let html=`<a onclick="go('')">bucket</a>`;
-  for(const p of parts){ acc+=p+'/'; const a=acc; html+=`<span class="sep">/</span><a onclick="go('${esc(a)}')">${esc(p)}</a>`; }
+  const root=state.home?'моя папка':'bucket';
+  let html=`<a onclick="go('${esc(state.home)}')">${root}</a>`;
+  for(const p of parts){
+    acc+=p+'/';
+    const a=acc;
+    const locked = state.home && a.length < state.home.length;   // сегмент выше своей папки
+    html+=`<span class="sep">/</span>`
+        + (locked ? `<span>${esc(p)}</span>` : `<a onclick="go('${esc(a)}')">${esc(p)}</a>`);
+  }
   return html;
 }
 
@@ -73,6 +83,8 @@ function load(){
       out.innerHTML=`<div class="banner">S3 выключен (не заданы <code>NEIROMASTER_S3_ENDPOINT</code> / <code>NEIROMASTER_S3_BUCKET</code>). Оригиналы хранятся только локально в <code>data/documents/</code>. Задайте переменные окружения S3 на сервере приложения — хранилище может быть на другом сервере.</div>`;
       return;
     }
+    state.prefix = d.prefix || '';   // сервер мог подменить префикс на разрешённый
+    state.home = d.home || '';
     render(d);
   }).catch(e=>{ out.innerHTML=`<div class="banner">Ошибка листинга: ${esc(e.message)}</div>`; });
 }
@@ -103,7 +115,7 @@ function render(d){
         <tbody>${rows}</tbody>
       </table>
       <div class="foot">
-        <span>${state.recursive?'файлов (рекурсивно)':'папок '+folders.length+' · файлов'}: ${files.length}</span>
+        <span>${d.scope==='own'?'Видна только ваша папка · ':''}${state.recursive?'файлов (рекурсивно)':'папок '+folders.length+' · файлов'}: ${files.length}</span>
         <span>суммарно: <b>${fmtSize(d.total_size)}</b>${d.truncated?' · показаны первые 1000':''}</span>
       </div>
     </div>`;

@@ -207,7 +207,9 @@ def convert_document(filepath: Path) -> DoclingDocument:
     при повторной обработке того же файла (переезд между папками, смена
     параметров чанкинга) можно переиспользовать готовую структуру документа.
     """
-    storage.pull(filepath)   # если локальной копии нет — тянем оригинал из S3
+    # если локальной копии нет — тянем оригинал из S3 по ключу из реестра
+    # (структура <суперадмин>/<админ>/<файл>; у старых записей ключа нет — плоский)
+    storage.pull(filepath, _load_registry().get(filepath.name, {}).get("s3_key") or "")
     cache_path = CACHE_DIR / f"{filepath.stem}__{file_hash(filepath)}.json"
     if cache_path.exists():
         return DoclingDocument.load_from_json(str(cache_path))
@@ -762,7 +764,8 @@ def delete_document(filename: str, remove_file: bool = True) -> bool:
     if entry and remove_file:
         rel_path = entry.get("path", filename)
         filepath = DOCS_DIR / rel_path
-        storage.delete(rel_path)   # убираем оригинал из S3 (no-op, если S3 выключен)
+        # убираем оригинал из S3 по ключу владельца (no-op, если S3 выключен)
+        storage.delete(rel_path, entry.get("s3_key") or "")
         if filepath.exists():
             filepath.unlink()
             for cache_file in CACHE_DIR.glob(f"{filepath.stem}__*.json"):
@@ -813,7 +816,19 @@ def strip_folder_from_chunks(slug: str):
 
 
 # ---------- Приём загруженного файла (используется веб-ручкой upload) ----------
-def save_uploaded_file(filename: str, content: bytes) -> Path:
+def owner_dirs(uploader: Optional[dict] = None) -> tuple:
+    """
+    Пара папок хранилища для загрузки: (папка суперадмина, папка загрузившего).
+    Структура в S3 — <суперадмин>/<администратор>/<файл>: всё, что грузят
+    администраторы, лежит внутри папки суперадмина. Если загрузивший неизвестен
+    (CLI-индексация), кладём в папку суперадмина как в общую.
+    """
+    import users
+    top = users.dir_slug(users.get_owner())
+    return top, (users.dir_slug(uploader) if uploader else top)
+
+
+def save_uploaded_file(filename: str, content: bytes, uploader: Optional[dict] = None) -> Path:
     filename = safe_filename(filename)
     ext = Path(filename).suffix.lower()
     if ext not in SUPPORTED_EXT:
@@ -821,13 +836,19 @@ def save_uploaded_file(filename: str, content: bytes) -> Path:
     if len(content) > MAX_UPLOAD_BYTES:
         raise ValueError(f"Файл превышает лимит {MAX_UPLOAD_BYTES // (1024*1024)} МБ")
 
-    # Файл хранится в одном экземпляре, плоско в data/documents/. Папки — логические
-    # метки, физических копий не создают (ТЗ §2). Классификацию по папкам сделает
-    # index_document() при обработке.
+    # Локально файл лежит плоско в data/documents/ — это КЭШ для конвейера docling
+    # (папки — логические метки, физических копий не создают, ТЗ §2). Структура
+    # «суперадмин/администратор» живёт в durable-хранилище S3: см. storage.doc_key.
     filepath = DOCS_DIR / filename
     with open(filepath, "wb") as f:
         f.write(content)
-    storage.put(filename, content)   # дублируем оригинал в S3 (no-op, если S3 выключен)
+    try:
+        top, own = owner_dirs(uploader)
+    except Exception as e:            # БД недоступна — не срываем загрузку
+        _log("STORAGE", f"не удалось определить папку владельца: {e}")
+        top = own = ""
+    s3_key = storage.doc_key(filename, top, own)
+    storage.put(filename, content, s3_key)   # дублируем оригинал в S3 (no-op, если S3 выключен)
 
     _update_registry(
         filename,
@@ -839,6 +860,14 @@ def save_uploaded_file(filename: str, content: bytes) -> Path:
         stage_ids=[],
         summary=None,
         error=None,
+        # Владелец документа: по нему работает разграничение видимости (админ видит
+        # только свои загрузки, суперадмин — все) и строится путь в хранилище.
+        uploaded_by=(uploader or {}).get("id"),
+        uploaded_by_name=(uploader or {}).get("full_name") or (uploader or {}).get("username") or "",
+        uploaded_by_role=(uploader or {}).get("role"),
+        department=(uploader or {}).get("department") or "",
+        storage_path=f"{top}/{own}/{filename}" if top and own else filename,
+        s3_key=s3_key,
     )
     return filepath
 

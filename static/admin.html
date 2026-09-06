@@ -334,6 +334,9 @@
         dialog::backdrop { background: rgba(15,23,42,0.35); }
         dialog label { display: block; font-size: 13px; color: #475569; margin-bottom: 4px; }
         dialog input { width: 100%; box-sizing: border-box; margin-bottom: 14px; }
+    .owner-group { border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; margin-bottom:14px; background:#f8fafc; }
+    .owner-head { display:flex; align-items:center; gap:8px; font-size:14px; color:#334155; margin-bottom:8px; }
+    .owner-head .owner-count { margin-left:auto; color:#64748b; font-size:13px; }
     </style>
     <link rel="stylesheet" href="/static/app.css">
 </head>
@@ -398,7 +401,7 @@
                 <a class="ghost-btn" href="/doc-breakdown"><i data-lucide="scan-text"></i> Разбор (блоки/чанки/метки)</a>
                 <a class="ghost-btn" href="/s3"><i data-lucide="hard-drive"></i> S3-хранилище</a>
                 <button class="ghost-btn" onclick="assignChunksToStages()"><i data-lucide="layers"></i> Разложить чанки по этапам</button>
-                <button class="ghost-btn" onclick="reanalyzeAll()"><i data-lucide="refresh-cw"></i> Переанализировать всё</button>
+                <button class="ghost-btn" id="btn-reanalyze-all" style="display:none;" onclick="reanalyzeAll()"><i data-lucide="refresh-cw"></i> Переанализировать всё</button>
             </div>
         </div>
         <div class="stage-hint">Ассистент сам относит документы к папкам по смыслу. Все документы попадают в общую базу «Все документы» независимо от папок.</div>
@@ -673,6 +676,9 @@
             const roleTitle = isOwner ? 'главный администратор' : 'администратор';
             document.getElementById('whoami').innerHTML = `<i data-lucide="user"></i> ${escapeHtml(me.full_name || me.username)} · ${roleTitle}`;
             if (employeesCache.length) renderEmployees(employeesCache);
+            if (docsCache.length) renderDocuments(docsCache);   // группировка по владельцу — только суперадмину
+            // «Переанализировать всё» задевает документы всех администраторов -> только суперадмину
+            if (isOwner) document.getElementById('btn-reanalyze-all').style.display = '';
         }).catch(() => {});
 
         function logout() {
@@ -816,9 +822,11 @@
         }
 
         let anyReanalyzing = false;   // есть документы в статусе reanalyzing -> опрашиваем чаще
+        let docsCache = [];
         function loadDocuments() {
             return api('/documents').then(r => r.json()).then(d => {
                 const docs = d.documents || [];
+                docsCache = docs;
                 anyReanalyzing = docs.some(doc => doc.status === 'reanalyzing');
                 renderDocuments(docs);
                 reconcilePending(docs);
@@ -1023,12 +1031,37 @@
             api('/folders/' + id, { method: 'DELETE' }).then(() => loadFolders());
         }
 
+        // Суперадмин видит документы ВСЕХ администраторов и группирует их по владельцу
+        // (как папки в хранилище: <суперадмин>/<администратор>/<файл>).
+        // Обычный администратор получает с сервера только свои — группировки нет.
         function renderDocuments(docs) {
             if (!docs.length) {
-                docList.innerHTML = `<div class="empty-hint">Пока нет загруженных документов — добавьте первый регламент выше.</div>`;
+                docList.innerHTML = `<div class="empty-hint">${isOwner
+                    ? 'Пока никто из администраторов не загрузил документы.'
+                    : 'Пока нет ваших документов — добавьте первый регламент выше.'}</div>`;
                 return;
             }
-            docList.innerHTML = docs.map(doc => {
+            if (!isOwner) { docList.innerHTML = docs.map(docCard).join(''); refreshIcons(); return; }
+
+            const groups = new Map();
+            docs.forEach(d => {
+                const key = d.uploaded_by_name || 'Без владельца (загружено до разделения прав)';
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(d);
+            });
+            docList.innerHTML = [...groups.entries()].map(([owner, list]) => {
+                const dep = (list.find(d => d.department) || {}).department || '';
+                return `<div class="owner-group">
+                    <div class="owner-head"><i data-lucide="folder-open"></i>
+                        <b>${escapeHtml(owner)}</b>${dep ? ` · ${escapeHtml(dep)}` : ''}
+                        <span class="owner-count">${list.length} док.</span></div>
+                    ${list.map(docCard).join('')}
+                </div>`;
+            }).join('');
+            refreshIcons();
+        }
+
+        function docCard(doc) {
                 const meta = [
                     doc.size_bytes !== undefined ? formatSize(doc.size_bytes) : null,
                     doc.chunks ? `${doc.chunks} чанков` : null,
@@ -1047,6 +1080,9 @@
                     ? `<div class="doc-meta" style="color:#0369a1;margin-top:4px;"><i data-lucide="info"></i> Уточнение: ${escapeHtml(doc.clarification)}</div>` : '';
                 const errorLine = doc.status === 'error' && doc.error
                     ? `<div class="doc-meta" style="color:#dc2626;">${escapeHtml(doc.error)}</div>` : '';
+                const ownerLine = doc.uploaded_by_name
+                    ? `<div class="doc-meta"><i data-lucide="user"></i> Загрузил: ${escapeHtml(doc.uploaded_by_name)}${doc.department ? ' · ' + escapeHtml(doc.department) : ''}${doc.storage_path ? ` · <code>${escapeHtml(doc.storage_path)}</code>` : ''}</div>`
+                    : '';
                 return `
                     <div class="doc-item" style="flex-direction:column;align-items:stretch;">
                       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
@@ -1055,6 +1091,7 @@
                             ${folderLine}
                             ${summaryLine}
                             <div class="doc-meta">${meta}</div>
+                            ${ownerLine}
                             ${clarLine}
                             ${errorLine}
                         </div>
@@ -1072,8 +1109,6 @@
                         </div>` : ''}
                     </div>
                 `;
-            }).join('');
-            refreshIcons();
         }
 
         function folderName(slug) { const f = allFolders.find(x => x.slug === slug); return f ? f.name : slug; }

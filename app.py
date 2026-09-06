@@ -212,6 +212,28 @@ admin_only = [Depends(require_admin)]
 owner_only = [Depends(require_owner)]
 
 
+# ---------- Разграничение видимости между администраторами ----------
+# Суперадмин (owner) видит всё, что загрузили администраторы, и всех людей.
+# Администратор — только СВОИ загруженные документы и людей СВОЕГО отдела.
+# Сотрудник (employee) сюда не попадает: админские ручки закрыты require_admin.
+can_see_doc = users.can_see_doc          # правила — в users.py (там же и тесты)
+
+
+def visible_documents(user: dict) -> list:
+    return users.visible_docs(user, indexing.list_documents())
+
+
+def ensure_doc_access(user: dict, filename: str):
+    """403, если администратор обращается к чужому документу. Незнакомое имя
+    пропускаем — свой 404 отдаст сам обработчик."""
+    if users.is_owner(user):
+        return
+    doc = next((d for d in indexing.list_documents() if d.get("filename") == filename), None)
+    if doc is not None and not can_see_doc(user, doc):
+        raise HTTPException(status_code=403,
+                            detail="Документ загружен другим администратором")
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -309,12 +331,27 @@ async def s3_page(request: Request):
     return HTMLResponse(_read_static("s3_browser.html"))
 
 
-@app.get("/api/s3/list", dependencies=admin_only)
-async def api_s3_list(prefix: str = "", recursive: bool = False):
+@app.get("/api/s3/list")
+async def api_s3_list(prefix: str = "", recursive: bool = False,
+                      user: dict = Depends(require_admin)):
     """Листинг бакета (метаданные): «папки» + файлы уровня, либо рекурсивно. Хранилище
-    может быть на другом сервере — endpoint/bucket отдаём в ответе."""
+    может быть на другом сервере — endpoint/bucket отдаём в ответе.
+
+    Суперадмин ходит по всему бакету (его папка — корень структуры), обычный
+    администратор заперт в СВОЁМ подкаталоге <суперадмин>/<админ>/: запрошенный
+    префикс вне него подменяется на собственный, чужие файлы не листаются."""
+    import config
     import storage
-    return storage.list_objects(prefix=prefix, delimiter=("" if recursive else "/"))
+    home = ""
+    if not users.is_owner(user):
+        top, own = indexing.owner_dirs(user)
+        home = f"{config.S3_PREFIX}{top}/{own}/"
+        if not (prefix or "").startswith(home):
+            prefix = home
+    data = storage.list_objects(prefix=prefix, delimiter=("" if recursive else "/"))
+    data["home"] = home          # ниже этого префикса администратору спускаться нельзя
+    data["scope"] = "all" if users.is_owner(user) else "own"
+    return data
 
 
 @app.get("/documents-board", response_class=HTMLResponse)
@@ -519,40 +556,46 @@ async def reset_session(session_id: str, user: dict = Depends(require_setup_done
 
 
 # ---------- Управление документами ----------
-@app.get("/documents", dependencies=admin_only)
-async def get_documents():
-    """Список документов в базе с их статусом индексации (загружен / обрабатывается / готов / ошибка)."""
-    return {"documents": indexing.list_documents()}
+@app.get("/documents")
+async def get_documents(user: dict = Depends(require_admin)):
+    """Список документов в базе с их статусом индексации (загружен / обрабатывается / готов / ошибка).
+    Суперадмину — все документы, администратору — только его собственные загрузки."""
+    return {"documents": visible_documents(user),
+            "scope": "all" if users.is_owner(user) else "own"}
 
 
-@app.get("/documents/board", dependencies=admin_only)
-async def get_documents_board():
+@app.get("/documents/board")
+async def get_documents_board(user: dict = Depends(require_admin)):
     """Данные экрана «этапы ↔ документы»: этапы, подэтапы и относящиеся к ним
-    документы (по метаданным из реестра) + документы без уверенной привязки."""
-    return documents.board()
+    документы (по метаданным из реестра) + документы без уверенной привязки.
+    Администратор видит на доске только свои документы."""
+    return documents.build_board(stages.list_stages(),
+                                 [d for d in documents.list_docs() if can_see_doc(user, d)])
 
 
-@app.get("/documents/table", dependencies=admin_only)
-async def get_documents_table():
+@app.get("/documents/table")
+async def get_documents_table(user: dict = Depends(require_admin)):
     """Табличные данные по обработанным файлам из реестра метаданных (PostgreSQL):
-    все поля, кроме тяжёлого вектора (у него — только длина)."""
-    return {"documents": documents.list_meta()}
+    все поля, кроме тяжёлого вектора (у него — только длина). Фильтр по владельцу."""
+    return {"documents": [d for d in documents.list_meta() if can_see_doc(user, d)]}
 
 
-@app.get("/documents/{filename}/substage-map", dependencies=admin_only)
-async def get_document_substage_map(filename: str):
+@app.get("/documents/{filename}/substage-map")
+async def get_document_substage_map(filename: str, user: dict = Depends(require_admin)):
     """Разбивка документа по подэтапам: какие куски текста к каким подэтапам отнесены и
     с какой уверенностью (косинус) — критерий попадания. Низкий score выдаёт ошибочные."""
+    ensure_doc_access(user, filename)
     data = indexing.document_substage_map(filename)
     if data is None:
         raise HTTPException(status_code=404, detail="Чанки документа не найдены")
     return data
 
 
-@app.post("/documents/{filename}/reindex", dependencies=admin_only)
-async def reindex_document(filename: str):
+@app.post("/documents/{filename}/reindex")
+async def reindex_document(filename: str, user: dict = Depends(require_admin)):
     """Переанализ документа (без повторного docling): обновляет папки/этапы по чанкам
     и синхронизирует запись в реестре метаданных."""
+    ensure_doc_access(user, filename)
     result = indexing.reanalyze_document(filename)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
@@ -565,8 +608,8 @@ async def reindex_document(filename: str):
     return result
 
 
-@app.post("/documents/upload", dependencies=admin_only)
-async def upload_document(file: UploadFile = File(...)):
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...), user: dict = Depends(require_admin)):
     """
     Загрузка нового регламента. Файл сохраняется в data/documents/ и ставится
     в фоновую очередь на индексацию (docling -> чанкинг -> эмбеддинги -> Qdrant).
@@ -594,7 +637,9 @@ async def upload_document(file: UploadFile = File(...)):
         })
 
     try:
-        filepath = indexing.save_uploaded_file(file.filename, content)
+        # uploader -> владелец документа: задаёт путь <суперадмин>/<админ>/<файл>
+        # в S3 и определяет, кому документ будет виден.
+        filepath = indexing.save_uploaded_file(file.filename, content, uploader=user)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -672,18 +717,20 @@ async def get_label_job(job_id: str):
     return dict(job)
 
 
-@app.get("/documents/labeled", dependencies=admin_only)
-async def list_labeled_documents():
-    """Имена документов, размеченных docpipe (для просмотрщика разбора)."""
+@app.get("/documents/labeled")
+async def list_labeled_documents(user: dict = Depends(require_admin)):
+    """Имена документов, размеченных docpipe (для просмотрщика разбора). Только свои."""
     import docpipe.store as dstore
-    return {"documents": dstore.list_documents()}
+    allowed = {d.get("filename") for d in visible_documents(user)}
+    return {"documents": [f for f in dstore.list_documents() if f in allowed]}
 
 
-@app.get("/documents/{filename}/labels", dependencies=admin_only)
-async def get_document_labels(filename: str):
+@app.get("/documents/{filename}/labels")
+async def get_document_labels(filename: str, user: dict = Depends(require_admin)):
     """Полный разбор документа (docpipe): карточка документа + блоки (секции) с текстом,
     метками (этапы/подэтапы/профессии), обоснованием «почему», названиями и описаниями
     этапов/подэтапов, и чанками каждого блока. Источник правды по разметке (LLM, temp=0)."""
+    ensure_doc_access(user, filename)
     import docpipe
     data = docpipe.document_breakdown(filename)
     if data is None:
@@ -702,18 +749,20 @@ async def doc_breakdown_page(request: Request):
     return HTMLResponse(_read_static("doc_breakdown.html"))
 
 
-@app.get("/documents/{filename}/chunks", dependencies=admin_only)
-async def get_document_chunks(filename: str):
+@app.get("/documents/{filename}/chunks")
+async def get_document_chunks(filename: str, user: dict = Depends(require_admin)):
     """Подробности разбиения документа: чанки и вектор каждого чанка (для кнопки «Подробнее»)."""
+    ensure_doc_access(user, filename)
     detail = indexing.get_document_chunks(filename)
     if detail is None:
         raise HTTPException(status_code=404, detail="Чанки не найдены — документ ещё не проиндексирован")
     return detail
 
 
-@app.delete("/documents/{filename}", dependencies=admin_only)
-async def remove_document(filename: str):
+@app.delete("/documents/{filename}")
+async def remove_document(filename: str, user: dict = Depends(require_admin)):
     """Удаляет документ: векторы из Qdrant, оригинал из data/documents, кэш docling."""
+    ensure_doc_access(user, filename)
     existed = indexing.delete_document(filename)
     if not existed:
         raise HTTPException(status_code=404, detail="Документ не найден")
@@ -800,26 +849,30 @@ class ClarifyRequest(BaseModel):
     clarification: str
 
 
-@app.post("/documents/reanalyze", dependencies=admin_only)
+@app.post("/documents/reanalyze", dependencies=owner_only)
 def reanalyze_documents():
-    """Полный повторный анализ всей базы под текущую структуру папок (фоново)."""
+    """Полный повторный анализ ВСЕЙ базы под текущую структуру папок (фоново).
+    Только суперадмин: операция задевает документы всех администраторов."""
     classify.sync_folder_vectors()
     _bg(indexing.reanalyze_all)
     return {"started": True}
 
 
-@app.post("/documents/{filename}/reanalyze", dependencies=admin_only)
-def reanalyze_one(filename: str):
+@app.post("/documents/{filename}/reanalyze")
+def reanalyze_one(filename: str, user: dict = Depends(require_admin)):
     """Переанализ одного документа — фоново; статус (reanalyzing -> indexed/error)
     виден в списке документов рядом с этим документом."""
+    ensure_doc_access(user, filename)
     _bg(indexing.reanalyze_document, filename)
     return {"started": True}
 
 
-@app.post("/documents/{filename}/clarify", dependencies=admin_only)
-async def clarify_document(filename: str, req: ClarifyRequest):
+@app.post("/documents/{filename}/clarify")
+async def clarify_document(filename: str, req: ClarifyRequest,
+                           user: dict = Depends(require_admin)):
     """Текстовое уточнение пользователя (актуальность/архив/область действия — ТЗ §17).
     Исходный документ не переписывается — уточнение хранится как доп. контекст."""
+    ensure_doc_access(user, filename)
     if not indexing.set_clarification(filename, req.clarification):
         raise HTTPException(status_code=404, detail="Документ не найден")
     return {"filename": filename, "clarification": req.clarification}
@@ -1117,11 +1170,12 @@ def _target_user(user_id: str, actor: dict) -> dict:
     return target
 
 
-@app.get("/users", dependencies=admin_only)
-async def get_users():
+@app.get("/users")
+async def get_users(actor: dict = Depends(require_admin)):
+    """Суперадмин видит всех, администратор — только людей своего отдела (и себя)."""
     plans = {p["plan_id"]: p for p in planner.list_plans()}
     result = []
-    for user in users.list_users():
+    for user in users.visible_users(actor, users.list_users()):
         plan = plans.get(user.get("plan_id"))
         result.append({
             **user,
@@ -1129,7 +1183,7 @@ async def get_users():
             "plan_generated": bool(plan and plan.get("generated")),
             "has_account": bool(user.get("username")),
         })
-    return {"users": result}
+    return {"users": result, "scope": "all" if users.is_owner(actor) else "department"}
 
 
 @app.post("/users", dependencies=admin_only)
@@ -1138,20 +1192,22 @@ async def create_user(req: UserRequest, actor: dict = Depends(require_admin)):
     Заведение сотрудника администратором. Логин и временный пароль необязательны:
     профиль можно создать заранее, а доступ выдать позже.
     """
+    payload = req.model_dump()
+    # Отдел по умолчанию — отдел заводящего администратора: иначе он создаст человека,
+    # которого сам же не увидит (список людей отфильтрован по отделу).
+    if not users.is_owner(actor) and not (payload.get("department") or "").strip():
+        payload["department"] = actor.get("department") or ""
     try:
-        user = users.create_user(req.model_dump(), actor=actor, role=users.ROLE_EMPLOYEE,
+        user = users.create_user(payload, actor=actor, role=users.ROLE_EMPLOYEE,
                                  must_change_credentials=bool(req.password))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return users.public_view(user)
 
 
-@app.get("/users/{user_id}", dependencies=admin_only)
-async def get_user(user_id: str):
-    user = users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-    return users.public_view(user)
+@app.get("/users/{user_id}")
+async def get_user(user_id: str, actor: dict = Depends(require_admin)):
+    return users.public_view(_target_user(user_id, actor))
 
 
 @app.put("/users/{user_id}")
@@ -1242,16 +1298,14 @@ async def transfer_ownership(user_id: str, actor: dict = Depends(require_owner))
     return users.public_view(new_owner)
 
 
-@app.get("/users/{user_id}/schedule", dependencies=admin_only)
-async def get_user_schedule(user_id: str):
+@app.get("/users/{user_id}/schedule")
+async def get_user_schedule(user_id: str, actor: dict = Depends(require_admin)):
     """
     Персональное расписание: план-шаблон, пересчитанный на дату выхода этого
     сотрудника, с подстановкой плейсхолдеров. Считается на лету — при правке
     плана или даты выхода расписание всегда актуальное.
     """
-    user = users.get_user(user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    user = _target_user(user_id, actor)
     try:
         return adaptation.build_employee_schedule(user)
     except ValueError as e:
@@ -1261,14 +1315,12 @@ async def get_user_schedule(user_id: str):
 EMPLOYEE_EXPORTS = {"schedule.json", "schedule.md"}
 
 
-@app.get("/users/{user_id}/export/{name}", dependencies=admin_only)
-async def export_user_schedule(user_id: str, name: str):
+@app.get("/users/{user_id}/export/{name}")
+async def export_user_schedule(user_id: str, name: str, actor: dict = Depends(require_admin)):
     if name not in EMPLOYEE_EXPORTS:
         raise HTTPException(status_code=400, detail=f"Доступны: {', '.join(EMPLOYEE_EXPORTS)}")
 
-    employee = users.get_user(user_id)
-    if employee is None:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    employee = _target_user(user_id, actor)
     try:
         schedule = adaptation.build_employee_schedule(employee)
     except ValueError as e:

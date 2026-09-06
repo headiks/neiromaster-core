@@ -35,33 +35,52 @@ def _s3():
 
 
 def _key(filename: str) -> str:
+    """Плоский ключ (как было до ролей). Остаётся для старых, уже залитых файлов."""
     return f"{config.S3_PREFIX}{Path(filename).name}"
 
 
-def put(filename: str, content: bytes):
-    """Залить оригинал в S3. No-op, если S3 выключен."""
+def doc_key(filename: str, owner_slug: str = "", admin_slug: str = "") -> str:
+    """
+    Ключ оригинала в структуре ролей:
+
+        <S3_PREFIX><папка суперадмина>/<папка администратора>/<файл>
+
+    То есть всё, что грузят администраторы, лежит внутри папки суперадмина — он
+    видит хранилище целиком, администратор работает только в своём подкаталоге.
+    Слаги приходят из users.dir_slug (ограничены [a-z0-9._-], выйти из префикса
+    нельзя). Если владелец неизвестен (старые файлы, CLI-индексация) — плоский ключ.
+    """
+    name = Path(filename).name
+    if owner_slug and admin_slug:
+        return f"{config.S3_PREFIX}{owner_slug}/{admin_slug}/{name}"
+    return _key(name)
+
+
+def put(filename: str, content: bytes, key: str = ""):
+    """Залить оригинал в S3. No-op, если S3 выключен. key — готовый ключ из doc_key."""
     if config.S3_ENABLED:
-        _s3().put_object(Bucket=config.S3_BUCKET, Key=_key(filename), Body=content)
+        _s3().put_object(Bucket=config.S3_BUCKET, Key=key or _key(filename), Body=content)
 
 
-def pull(filepath) -> bool:
+def pull(filepath, key: str = "") -> bool:
     """Если локальной копии нет — скачать оригинал из S3 в этот путь.
     Возвращает True, если файл доступен локально после вызова. Без S3 — просто
-    проверка существования локального файла."""
+    проверка существования локального файла. key — ключ из реестра (структура
+    ролей); без него берётся плоский ключ, как у файлов, залитых до ролей."""
     filepath = Path(filepath)
     if filepath.exists():
         return True
     if not config.S3_ENABLED:
         return False
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    _s3().download_file(config.S3_BUCKET, _key(filepath.name), str(filepath))
+    _s3().download_file(config.S3_BUCKET, key or _key(filepath.name), str(filepath))
     return True
 
 
-def delete(filename: str):
+def delete(filename: str, key: str = ""):
     """Удалить оригинал из S3. No-op, если S3 выключен."""
     if config.S3_ENABLED:
-        _s3().delete_object(Bucket=config.S3_BUCKET, Key=_key(filename))
+        _s3().delete_object(Bucket=config.S3_BUCKET, Key=key or _key(filename))
 
 
 def list_objects(prefix: str = "", delimiter: str = "/", max_keys: int = 1000) -> dict:
@@ -119,4 +138,10 @@ if __name__ == "__main__":
         config.S3_PREFIX = "documents/"
         assert _key("a.pdf") == "documents/a.pdf"
         assert _key("/tmp/sub/b.docx") == "documents/b.docx"
-        print("storage: _key — OK (для проверки S3-доступа: python storage.py --check)")
+        # структура ролей: <суперадмин>/<админ>/<файл>
+        assert doc_key("a.pdf", "super", "ivanov") == "documents/super/ivanov/a.pdf"
+        assert doc_key("/tmp/x/a.pdf", "super", "ivanov") == "documents/super/ivanov/a.pdf"
+        assert doc_key("a.pdf") == "documents/a.pdf"            # владелец неизвестен -> плоско
+        assert doc_key("a.pdf", "super", "") == "documents/a.pdf"
+        print("storage: ключи (плоский и по ролям) — OK "
+              "(для проверки S3-доступа: python storage.py --check)")
