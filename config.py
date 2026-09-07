@@ -4,9 +4,9 @@
 Вынесено отдельно, чтобы indexing.py <-> topics.py не импортировали друг друга по кругу.
 """
 import os
+import math
 import threading
 from pathlib import Path
-import requests
 
 try:
     import fcntl   # POSIX (Linux/macOS). На Windows недоступен — см. FileGuard.
@@ -109,7 +109,24 @@ EMBED_DIM = 1024
 EMBED_TIMEOUT = int(os.environ.get("NEIROMASTER_EMBED_TIMEOUT", "120"))
 
 
+def cosine(a, b) -> float:
+    """
+    Косинусная близость двух векторов; 0.0 для пустых, разной длины и нулевых.
+    Единственная реализация на весь проект: ею меряют близость и документы
+    (привязка к подэтапам), и indexing (этапы чанка), и rag (профессии),
+    и docpipe (сопоставление со штаткой).
+    """
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return sum(x * y for x, y in zip(a, b)) / (na * nb)
+
+
 def get_embedding(text: str):
+    import requests           # тяжёлая зависимость нужна только для эмбеддингов
     r = requests.post(
         f"{OLLAMA_URL}/api/embed",
         json={"model": EMBED_MODEL, "input": text},

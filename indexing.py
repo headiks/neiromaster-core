@@ -47,7 +47,7 @@ import storage
 from config import (
     DOCS_DIR, CONVERTED_DIR, CACHE_DIR, REGISTRY_PATH,
     SUPPORTED_EXT, MAX_UPLOAD_BYTES,
-    QDRANT_HOST, QDRANT_PORT, EMBED_DIM, get_embedding, FileGuard,
+    QDRANT_HOST, QDRANT_PORT, EMBED_DIM, get_embedding, FileGuard, cosine,
 )
 
 # Символическое перекрытие между соседними чанками (ТЗ §12): в текст для эмбеддинга
@@ -501,15 +501,6 @@ def _select_substages(scored):
     return out
 
 
-def _cos(a, b) -> float:
-    if not a or not b:
-        return 0.0
-    s = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    return s / (na * nb) if na and nb else 0.0
-
-
 _CATALOG_STAGE_VECS = None   # ((stage_id, vec)...), ((stage_id, sub_id, vec)...)
 
 
@@ -539,7 +530,7 @@ def _stage_tags(vec):
     (см. _select_substages): 0–3 самых близких подэтапа, а не всё подряд по порогу.
     Этапы выводятся из принятых подэтапов."""
     _, subv = _catalog_stage_vectors()
-    scored = [(stid, sub_id, _cos(vec, sv)) for stid, sub_id, sv in subv]
+    scored = [(stid, sub_id, cosine(vec, sv)) for stid, sub_id, sv in subv]
     accepted = _select_substages(scored)
     subs = sorted({s for _, s, _ in accepted})
     stages = sorted({st for st, _, _ in accepted})
@@ -680,7 +671,7 @@ def document_substage_map(filename: str) -> Optional[dict]:
         meaningful = pl.get("meaningful", True)
         matches = []
         if meaningful:
-            scored = [(stid, sub_id, _cos(p.vector, sv)) for stid, sub_id, sv in sub_vecs]
+            scored = [(stid, sub_id, cosine(p.vector, sv)) for stid, sub_id, sv in sub_vecs]
             accepted = {(st, sub) for st, sub, _ in _select_substages(scored)}   # реальные привязки
             for stid, sub_id, sc in scored:
                 if sc >= PLAN_STAGE_MATCH:   # показываем и кандидатов — для ручной оценки
@@ -896,14 +887,6 @@ def get_index_job(job_id: str) -> Optional[dict]:
     with _index_jobs_lock:
         job = _index_jobs.get(job_id)
         return dict(job) if job else None
-
-
-def queue_status() -> dict:
-    with _index_jobs_lock:
-        jobs = list(_index_jobs.values())
-    queued = sum(1 for j in jobs if j.get("status") == "queued")
-    running = sum(1 for j in jobs if j.get("status") == "processing")
-    return {"queued": queued, "running": running}
 
 
 def _index_worker():

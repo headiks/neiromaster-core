@@ -171,13 +171,6 @@ def extract_records(grid: list, mapping: dict, required: Optional[list] = None) 
     return records
 
 
-def normalize_table(grid: list, target_fields: list, required: Optional[list] = None) -> dict:
-    """Полный проход: разметка моделью + извлечение записей.
-    Возвращает {"mapping": {...}, "records": [...]}."""
-    mapping = map_columns(grid, target_fields)
-    return {"mapping": mapping, "records": extract_records(grid, mapping, required)}
-
-
 def read_xlsx_grid(source) -> list:
     """Читает xlsx (путь или bytes) в 2D-грид строк активного листа. openpyxl импортируется
     лениво — чистой логике маппинга/извлечения драйвер xlsx не нужен (и её тесты тоже)."""

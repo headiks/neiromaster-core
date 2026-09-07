@@ -4,7 +4,7 @@
 < 0.7 отбрасываются. Так метки профессий всегда указывают на существующие должности.
 """
 
-from config import get_embedding
+from config import get_embedding, cosine
 
 MATCH_THRESHOLD = 0.7
 _vec_cache: dict = {}   # текст должности -> эмбеддинг (должностей немного)
@@ -16,15 +16,6 @@ def _vec(text: str):
         v = get_embedding(text)
         _vec_cache[text] = v
     return v
-
-
-def _cos(a, b) -> float:
-    if not a or not b:
-        return 0.0
-    s = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    return s / (na * nb) if na and nb else 0.0
 
 
 def staffing_positions() -> list:
@@ -64,7 +55,7 @@ def match_to_staffing(named: list, positions: list, threshold: float = MATCH_THR
             nv = embed(name)
             best_p, best_c = None, -1.0
             for p in positions:
-                c = _cos(nv, embed(p))
+                c = cosine(nv, embed(p))
                 if c > best_c:
                     best_p, best_c = p, c
         except Exception:

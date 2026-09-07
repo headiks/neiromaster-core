@@ -1,19 +1,10 @@
 """Проверка фильтра смысловой нагрузки чанка (classify.is_meaningful) — чистая логика,
 без сети/Qdrant. Мусор (заголовки, номера страниц, оглавление) не должен распределяться."""
 
-import sys
-import types
-from unittest.mock import MagicMock
+import test_stubs
 
-for _n in ("qdrant_client", "qdrant_client.models", "folders", "config"):
-    sys.modules.setdefault(_n, types.ModuleType(_n))
-sys.modules["qdrant_client"].QdrantClient = lambda *a, **k: MagicMock()
-for _n in ["VectorParams", "Distance", "PointStruct", "Filter", "FieldCondition", "MatchValue"]:
-    setattr(sys.modules["qdrant_client.models"], _n, MagicMock())
-cfg = sys.modules["config"]
-cfg.QDRANT_HOST = "x"; cfg.QDRANT_PORT = 0; cfg.EMBED_DIM = 8; cfg.OLLAMA_URL = "http://x"
-cfg.get_embedding = lambda t: [0.0] * 8
-sys.modules.setdefault("requests", MagicMock())
+# classify НЕ подменяем — его и тестируем
+test_stubs.install(embed_dim=8, stub_modules=("folders",))
 
 import classify
 

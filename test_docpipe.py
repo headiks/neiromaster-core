@@ -11,28 +11,17 @@ import types
 from unittest.mock import MagicMock
 
 # ---- заглушки тяжёлых зависимостей ДО импорта пакета docpipe ----
-for _n in ("psycopg", "psycopg.types", "psycopg.rows", "psycopg_pool",
-           "qdrant_client", "qdrant_client.models", "requests"):
-    sys.modules.setdefault(_n, types.ModuleType(_n))
-sys.modules["psycopg.types.json"] = types.ModuleType("psycopg.types.json")
-sys.modules["psycopg.types.json"].Json = lambda x: x
-sys.modules["qdrant_client"].QdrantClient = lambda *a, **k: MagicMock()
-for _n in ["VectorParams", "Distance", "PointStruct", "Filter", "FieldCondition",
-           "MatchValue", "MatchAny", "PayloadSchemaType"]:
-    setattr(sys.modules["qdrant_client.models"], _n, MagicMock())
+import test_stubs
 
-# управляемый стаб БД
+test_stubs.install(embed_dim=4, embed=lambda t: [1.0, 0.0, 0.0, 0.0], db=False, psycopg=True)
+
+# управляемый стаб БД: тест сам решает, что вернёт query (см. _query_hook)
 _db = types.ModuleType("db")
 _db._exec_log = []
 _db._query_hook = lambda sql, params=(), fetch="all": None
 _db.execute = lambda sql, params=(): _db._exec_log.append((sql, params))
 _db.query = lambda sql, params=(), fetch="all": _db._query_hook(sql, params, fetch)
 sys.modules["db"] = _db
-
-_cfg = types.ModuleType("config")
-_cfg.QDRANT_HOST = "x"; _cfg.QDRANT_PORT = 0; _cfg.EMBED_DIM = 4; _cfg.OLLAMA_URL = "http://x"
-_cfg.get_embedding = lambda t: [1.0, 0.0, 0.0, 0.0]
-sys.modules["config"] = _cfg
 
 from docpipe import core, store, professions
 

@@ -6,7 +6,8 @@ import time
 
 import classify
 import folders
-from config import OLLAMA_URL as OLLAMA, QDRANT_HOST, QDRANT_PORT, get_embedding as _get_embedding
+from config import (OLLAMA_URL as OLLAMA, QDRANT_HOST, QDRANT_PORT,
+                    get_embedding as _get_embedding, cosine)
 
 # ---------- Конфигурация ----------
 QDRANT = f"http://{QDRANT_HOST}:{QDRANT_PORT}"   # хост/порт Qdrant — из config (единый источник)
@@ -363,15 +364,6 @@ PROF_PENALTY = 0.12
 _prof_vec_cache: dict = {}   # текст профессии -> эмбеддинг (профессий немного, кэш живёт в процессе)
 
 
-def _cos(a, b) -> float:
-    if not a or not b:
-        return 0.0
-    s = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    return s / (na * nb) if na and nb else 0.0
-
-
 def _prof_vec(text: str):
     v = _prof_vec_cache.get(text)
     if v is None:
@@ -395,7 +387,7 @@ def profession_delta(chunk_profession: str, position_vec) -> float:
     if not chunk_profession or position_vec is None:
         return 0.0
     try:
-        return _prof_delta_from_sim(_cos(position_vec, _prof_vec(chunk_profession)))
+        return _prof_delta_from_sim(cosine(position_vec, _prof_vec(chunk_profession)))
     except Exception:
         return 0.0
 

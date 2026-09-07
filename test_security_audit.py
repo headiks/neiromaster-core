@@ -127,10 +127,15 @@ def test_index_html_escapes_error_field():
 #    (или downgrade) токен уходит в открытом виде и перехватывается MITM.
 # ==========================================================================
 def test_session_cookie_is_secure():
-    app_src = (BASE / "app.py").read_text(encoding="utf-8")
-    # находим блок set_cookie
-    start = app_src.find("def _set_session_cookie")
-    block = app_src[start:start + 400]
+    # установка куки живёт в deps.py (веб-слой), но ищем по всем модулям — чтобы
+    # тест не отваливался при переносе кода между файлами.
+    block = ""
+    for path in sorted(BASE.glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        start = src.find("def _set_session_cookie")
+        if start >= 0:
+            block = src[start:start + 400]
+            break
     assert "set_cookie" in block, "не нашли установку куки — проверьте тест"
     assert "secure=" in block, (
         "Cookie сессии выставляется без secure=... — токен уйдёт по HTTP открытым текстом"

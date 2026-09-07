@@ -112,9 +112,3 @@ def build_employee_schedule(employee: dict) -> dict:
     }
 
 
-def upcoming_messages(schedule: dict, limit: int = 5, today: Optional[str] = None) -> list:
-    """Ближайшие сообщения от сегодняшнего дня — для личного кабинета сотрудника."""
-    today = today or time.strftime("%Y-%m-%d")
-    future = [m for m in schedule.get("messages") or []
-              if (m["schedule"].get("send_at") or "") >= today]
-    return future[:limit]

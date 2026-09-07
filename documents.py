@@ -24,9 +24,10 @@ documents.py — единый реестр метаданных загружен
 чистая логика (косинус, группировка экрана) наверху тестируется без БД и сети.
 """
 
-import math
 import time
 from typing import Optional
+
+from config import cosine        # единственная реализация косинуса (см. config.cosine)
 
 # Имя таблицы РЕЕСТРА метаданных. НЕ "documents": так называется таблица пайплайна
 # docpipe (со своей схемой и FK). Разводим по разным таблицам, чтобы обе жили рядом.
@@ -38,18 +39,6 @@ SUBSTAGE_THRESHOLD = 0.35
 
 
 # ---------- Чистая логика (без БД и сети — тестируется отдельно) ----------
-def cosine(a: list, b: list) -> float:
-    """Косинусная близость двух векторов; 0.0 при пустом/нулевом."""
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    if na == 0 or nb == 0:
-        return 0.0
-    return dot / (na * nb)
-
-
 def assign_substages(doc_vec: list, substage_vecs: list,
                      threshold: float = SUBSTAGE_THRESHOLD) -> list:
     """
@@ -352,40 +341,3 @@ def record(sha256: str, filename: str, summary: str, folders: list, stage_ids: l
     })
 
 
-# ---------- Экран «этапы ↔ документы» ----------
-def board() -> dict:
-    """Данные для экрана: этапы/подэтапы и относящиеся к ним документы + без привязки."""
-    import stages as stages_mod
-    return build_board(stages_mod.list_stages(), list_docs())
-
-
-# ---------- Разовое наполнение из старого registry.json ----------
-def backfill_from_registry() -> int:
-    """
-    Переносит уже загруженные документы из файлового registry.json в таблицу documents
-    (не трогая сам registry и пайплайн). Для каждого — считает подэтапы и вектор.
-    Возвращает число перенесённых. Нужны запущенные Postgres и Ollama (эмбеддинги).
-    """
-    import json
-    from config import REGISTRY_PATH, get_embedding
-    if not REGISTRY_PATH.exists():
-        return 0
-    reg = json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
-    count = 0
-    for filename, e in reg.items():
-        summary = e.get("summary") or ""
-        try:
-            doc_vec = get_embedding(summary or filename)
-            subs = assign_substages(doc_vec, _substage_vectors(e.get("stage_ids") or None))
-        except Exception:
-            doc_vec, subs = None, []
-        upsert({
-            "sha256": e.get("sha256") or e.get("hash") or filename,   # ключ: хэш, иначе имя
-            "filename": filename, "mime": e.get("mime"),
-            "status": e.get("status", "indexed"), "uploaded_at": e.get("uploaded_at"),
-            "summary": summary, "keywords": extract_keywords(summary), "embedding": doc_vec,
-            "folders": e.get("folders") or [], "stage_ids": e.get("stage_ids") or [],
-            "substages": subs,
-        })
-        count += 1
-    return count

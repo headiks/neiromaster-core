@@ -18,23 +18,17 @@ sys.modules["qdrant_client"].QdrantClient = lambda *a, **k: MagicMock()
 for _n in ["VectorParams", "Distance", "PointStruct", "Filter", "FieldCondition",
            "MatchValue", "MatchAny", "PayloadSchemaType"]:
     setattr(sys.modules["qdrant_client.models"], _n, MagicMock())
-_db = types.ModuleType("db"); _db.query = _db.execute = lambda *a, **k: None
-sys.modules.setdefault("db", _db)
-sys.modules.setdefault("requests", MagicMock())
-_cfg = types.ModuleType("config")
-_cfg.OLLAMA_URL = "http://x"; _cfg.QDRANT_HOST = "x"; _cfg.QDRANT_PORT = 0
-_cfg.get_embedding = lambda t: [0.0]
-sys.modules.setdefault("config", _cfg)
-sys.modules.setdefault("classify", MagicMock())
-sys.modules.setdefault("folders", MagicMock())
+import test_stubs
+
+_cfg = test_stubs.install(embed_dim=1)   # заглушки qdrant/db/requests/config
 
 import rag
 
 
 def test_cos():
-    assert abs(rag._cos([1, 0], [1, 0]) - 1.0) < 1e-9
-    assert abs(rag._cos([1, 0], [0, 1]) - 0.0) < 1e-9
-    assert rag._cos([], [1]) == 0.0            # пустой вектор — безопасный 0
+    assert abs(rag.cosine([1, 0], [1, 0]) - 1.0) < 1e-9
+    assert abs(rag.cosine([1, 0], [0, 1]) - 0.0) < 1e-9
+    assert rag.cosine([], [1]) == 0.0            # пустой вектор — безопасный 0
 
 
 def test_delta_rule():

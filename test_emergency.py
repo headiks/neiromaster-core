@@ -1,20 +1,9 @@
 """Проверка детерминированного ЧС-детектора (ТЗ 1.7) — чистые регэкспы, без сети.
 Тяжёлые зависимости rag.py (qdrant/requests/config/folders/classify) подменяются заглушками."""
 
-import sys
-import types
-from unittest.mock import MagicMock
+import test_stubs
 
-# --- заглушки, чтобы импортировать rag без установленных qdrant/ollama ---
-for _n in ("qdrant_client", "qdrant_client.models", "folders", "classify", "requests"):
-    sys.modules.setdefault(_n, types.ModuleType(_n))
-sys.modules["qdrant_client"].QdrantClient = lambda *a, **k: MagicMock()
-for _n in ["VectorParams", "Distance", "PointStruct", "Filter", "FieldCondition", "MatchValue", "MatchAny"]:
-    setattr(sys.modules["qdrant_client.models"], _n, MagicMock())
-cfg = types.ModuleType("config")
-cfg.OLLAMA_URL = "http://x"; cfg.QDRANT_HOST = "x"; cfg.QDRANT_PORT = 0
-cfg.get_embedding = lambda t: [0.0] * 8
-sys.modules["config"] = cfg
+test_stubs.install(embed_dim=8)   # qdrant/requests/config — заглушки, см. test_stubs.py
 
 import rag
 

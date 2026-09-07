@@ -54,13 +54,6 @@ def load_catalog() -> dict:
         return json.load(f)
 
 
-def catalog_stage(catalog_id: str) -> Optional[dict]:
-    for stage in load_catalog()["stages"]:
-        if stage["id"] == catalog_id:
-            return stage
-    return None
-
-
 def catalog_stage_query(stage: dict) -> str:
     """Смысловой «запрос этапа» — заголовок + описание + брифы и теги всех его подэтапов.
     По нему чанки раскладываются по этапам (материализация «папок этапов»)."""

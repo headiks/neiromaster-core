@@ -72,10 +72,6 @@ def replace_sections(doc_id: str, sections: list) -> list:
     return ids
 
 
-def list_sections(doc_id: str) -> list:
-    return db.query("SELECT * FROM sections WHERE doc_id = %s ORDER BY seq", (doc_id,))
-
-
 # ---------- Метки секций (правки человека не затираем) ----------
 def get_label_source(section_id: str):
     r = db.query("SELECT source FROM section_labels WHERE section_id = %s", (section_id,), fetch="one")
@@ -104,10 +100,6 @@ def upsert_section_label(section_id: str, label: dict, source: str,
          label.get("prof_conf"), label.get("why"), source, plan_version, model, prompt_version),
     )
     return True
-
-
-def get_section_label(section_id: str):
-    return db.query("SELECT * FROM section_labels WHERE section_id = %s", (section_id,), fetch="one")
 
 
 # ---------- Чанки ----------
@@ -181,5 +173,3 @@ def sections_with_labels(doc_id: str) -> list:
     )
 
 
-def pending_jobs() -> list:
-    return db.query("SELECT * FROM label_jobs WHERE status IN ('queued','running','error') ORDER BY updated_at")
