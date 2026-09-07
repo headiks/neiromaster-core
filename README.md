@@ -21,7 +21,9 @@ project/
 ├── db.py                   # PostgreSQL: пул соединений, схема, мультитенантность (use_schema)
 ├── config.py               # Пути, лимиты, S3, эмбеддинги, косинус
 │
-├── indexing.py             # docling -> чанкинг -> эмбеддинги -> Qdrant + реестр документов
+├── indexing.py             # docling -> чанкинг -> эмбеддинги -> Qdrant + пайплайн индексации
+├── docregistry.py          # Реестр документов (registry.json): статус, чанки, владелец, папки, s3_key
+├── docview.py              # Просмотр индексации: чанки/векторы, привязка к подэтапам, содержимое папки
 ├── documents.py            # Реестр метаданных (document_meta): дедуп по sha256, привязка к подэтапам
 ├── classify.py             # Раскладка документов и чанков по смысловым папкам
 ├── folders.py, stages.py   # Смысловые папки и этапы обучения (структура знаний)
@@ -34,8 +36,8 @@ project/
 ├── index_documents.py      # CLI: разовая пакетная индексация папки data/documents
 ├── seed_roles_demo.py      # CLI: тестовые роли и документы + отчёт «кто что видит»
 ├── requirements.txt
-├── static/                 # index.html (кабинет), login/register/setup, admin.html, s3_browser.html,
-│                           # documents_board.html, documents_table.html, doc_breakdown.html
+├── static/                 # index.html (кабинет), login/register/setup, admin.html (+admin.js/admin.css),
+│                           # s3_browser.html, documents_board/table.html, doc_breakdown.html
 └── data/
     ├── documents/          # Локальный кэш оригиналов (плоско; структура по владельцам — в S3)
     ├── converted/          # Markdown-версии документов

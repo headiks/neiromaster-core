@@ -100,7 +100,10 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="RAG Assistant API", lifespan=lifespan)
+# docs_url/redoc_url/openapi_url=None: служебные страницы FastAPI (Swagger и схема)
+# открыты анониму и раскрывают полный список ручек — на проде не нужны.
+app = FastAPI(title="RAG Assistant API", lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 for _module in ROUTERS:
