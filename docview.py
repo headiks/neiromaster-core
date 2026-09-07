@@ -2,9 +2,8 @@
 Просмотр индексации документа для админки — только ЧТЕНИЕ из Qdrant.
 
 Три экрана: как документ разбит на чанки и как выглядит вектор каждого
-(get_document_chunks), к каким подэтапам каталога отнесён каждый чанк и насколько
-уверенно — с обоснованием по косинусу (document_substage_map), и что лежит в
-смысловой папке (get_folder_chunks).
+(get_document_chunks), и что лежит в смысловой папке (get_folder_chunks). Привязка к подэтапам
+переехала на LLM-разметку docpipe (доска и «Разбор документа»), косинуса тут больше нет.
 
 Отделено от indexing.py: здесь нет ни записи в Qdrant, ни пайплайна docling —
 только выборки для UI. Общий низкоуровневый слой (клиент Qdrant, имя коллекции,
@@ -17,9 +16,7 @@ from typing import Optional
 
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 
-from config import cosine
-from indexing import (client, COLLECTION_NAME, PLAN_STAGE_MATCH,
-                      _select_substages, _catalog_stage_vectors)
+from indexing import client, COLLECTION_NAME
 
 
 def _vector_stats(vector) -> dict:
@@ -80,63 +77,6 @@ def get_document_chunks(filename: str) -> Optional[dict]:
         })
     chunks.sort(key=lambda c: (c["chunk_index"] is None, c["chunk_index"] or 0))
     return {"filename": filename, "chunks": chunks, "count": len(chunks)}
-
-
-def document_substage_map(filename: str) -> Optional[dict]:
-    """Разбивка документа по подэтапам с ОБОСНОВАНИЕМ: для каждого содержательного чанка —
-    к каким подэтапам он отнесён и НАСКОЛЬКО близок (косинус к «запросу подэтапа» каталога).
-    Score — и есть критерий: чем выше, тем увереннее; низкий у пункта → вероятно, попал ошибочно.
-    Возвращает {filename, chunks:[{chunk_index, section, page, text, meaningful,
-    matches:[{substage_id, stage_id, stage_title, title, brief, score}]}]}."""
-    import planner
-    cat = planner.load_catalog()
-    meta = {}   # sub_id -> подписи для UI
-    for st in cat.get("stages") or []:
-        for sub in st.get("substage_templates") or []:
-            meta[sub["id"]] = {"stage_id": st["id"], "stage_title": st.get("title", ""),
-                               "title": sub.get("title", ""), "brief": sub.get("brief", "")}
-    _, sub_vecs = _catalog_stage_vectors()   # [(stage_id, sub_id, vec)]
-
-    points = []
-    offset = None
-    while True:
-        batch, offset = client.scroll(
-            collection_name=COLLECTION_NAME,
-            scroll_filter=Filter(must=[FieldCondition(key="source", match=MatchValue(value=filename))]),
-            limit=256, with_payload=True, with_vectors=True, offset=offset,
-        )
-        points.extend(batch)
-        if offset is None:
-            break
-    if not points:
-        return None
-
-    chunks = []
-    for p in points:
-        pl = p.payload or {}
-        meaningful = pl.get("meaningful", True)
-        matches = []
-        if meaningful:
-            scored = [(stid, sub_id, cosine(p.vector, sv)) for stid, sub_id, sv in sub_vecs]
-            accepted = {(st, sub) for st, sub, _ in _select_substages(scored)}   # реальные привязки
-            for stid, sub_id, sc in scored:
-                if sc >= PLAN_STAGE_MATCH:   # показываем и кандидатов — для ручной оценки
-                    m = meta.get(sub_id, {})
-                    matches.append({"substage_id": sub_id, "stage_id": stid,
-                                    "stage_title": m.get("stage_title", ""), "title": m.get("title", ""),
-                                    "brief": m.get("brief", ""), "score": round(sc, 3),
-                                    "accepted": (stid, sub_id) in accepted})
-            matches.sort(key=lambda x: (x["accepted"], x["score"]), reverse=True)
-        chunks.append({
-            "chunk_index": pl.get("chunk_index"),
-            "section": pl.get("section") or "",
-            "page": pl.get("page"),
-            "meaningful": meaningful,
-            "text": pl.get("raw_text") or pl.get("text") or "",
-            "matches": matches,
-        })
-    chunks.sort(key=lambda c: (c["chunk_index"] is None, c["chunk_index"] or 0))
-    return {"filename": filename, "threshold": PLAN_STAGE_MATCH, "chunks": chunks, "count": len(chunks)}
 
 
 def get_folder_chunks(slug: str, limit: int = 1000) -> dict:

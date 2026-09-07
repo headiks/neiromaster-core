@@ -10,7 +10,6 @@ import indexing
 import docview
 import documents
 import folders
-import stages
 import classify
 import users
 from config import MAX_UPLOAD_BYTES
@@ -30,28 +29,44 @@ async def get_documents(user: dict = Depends(require_admin)):
 
 @router.get("/documents/board")
 async def get_documents_board(user: dict = Depends(require_admin)):
-    """Данные экрана «этапы ↔ документы»: этапы, подэтапы и относящиеся к ним
-    документы (по метаданным из реестра) + документы без уверенной привязки.
+    """Данные экрана «этапы ↔ документы» по ПЛАНУ адаптации. Привязка документов к
+    подэтапам — по LLM-разметке docpipe (не по косинусу): документ под подэтапом, если
+    его блок ПРЯМО этому подэтапу соответствует, score = уверенность модели.
     Администратор видит на доске только свои документы."""
-    return documents.build_board(stages.list_stages(),
-                                 [d for d in documents.list_docs() if can_see_doc(user, d)])
+    import docpipe
+    allowed = {d["filename"] for d in visible_documents(user)}
+    plan_stages, docs = docpipe.document_assignments(filenames=allowed)
+    return documents.build_board(plan_stages, docs)
 
 
 @router.get("/documents/table")
 async def get_documents_table(user: dict = Depends(require_admin)):
-    """Табличные данные по обработанным файлам из реестра метаданных (PostgreSQL):
-    все поля, кроме тяжёлого вектора (у него — только длина). Фильтр по владельцу."""
-    return {"documents": [d for d in documents.list_meta() if can_see_doc(user, d)]}
+    """Табличные данные по обработанным файлам. Папки/описание — из реестра метаданных,
+    привязка к подэтапам — по LLM-разметке docpipe (не по косинусу), как и на доске."""
+    import docpipe
+    allowed = {d["filename"] for d in visible_documents(user)}
+    _, assigned = docpipe.document_assignments(filenames=allowed)
+    subs_by_doc = {d["filename"]: d["substages"] for d in assigned}
+    rows = []
+    for d in documents.list_meta():
+        if not can_see_doc(user, d):
+            continue
+        row = dict(d)
+        row["substages"] = subs_by_doc.get(d["filename"], [])   # LLM-привязка вместо косинусной
+        rows.append(row)
+    return {"documents": rows}
 
 
 @router.get("/documents/{filename}/substage-map")
 async def get_document_substage_map(filename: str, user: dict = Depends(require_admin)):
-    """Разбивка документа по подэтапам: какие куски текста к каким подэтапам отнесены и
-    с какой уверенностью (косинус) — критерий попадания. Низкий score выдаёт ошибочные."""
+    """Разбивка документа по подэтапам — по LLM-разметке (блоки, обоснование why,
+    «общая информация»). Раньше здесь была приблизительная косинусная оценка; теперь
+    это то же, что показывает «Разбор документа»."""
     ensure_doc_access(user, filename)
-    data = docview.document_substage_map(filename)
+    import docpipe
+    data = docpipe.document_breakdown(filename)
     if data is None:
-        raise HTTPException(status_code=404, detail="Чанки документа не найдены")
+        raise HTTPException(status_code=404, detail="Документ ещё не размечен LLM")
     return data
 
 

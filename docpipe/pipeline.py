@@ -254,6 +254,53 @@ def document_breakdown(filename: str, plan_version: str = "current") -> dict:
     return {"filename": filename, "doc_card": doc.get("doc_card") or {}, "sections": sections}
 
 
+def document_assignments(filenames=None, plan_version: str = "current") -> tuple:
+    """
+    Привязка документов к подэтапам ПЛАНА по LLM-разметке (без косинуса) — данные для
+    доски «этапы ↔ документы». Документ отнесён к подэтапу, если хотя бы один его блок
+    размечен этим подэтапом; score = максимальная уверенность модели среди таких блоков.
+
+    Возвращает (plan_stages, docs) в формате documents.build_board:
+      plan_stages — структура плана (этапы с подэтапами);
+      docs — [{filename, mime, status, keywords, stage_ids, substages:[{stage_id, substage_id, score}]}].
+    filenames — ограничить набор (для разграничения видимости админов); None — все.
+    """
+    import docregistry
+    structure = store.get_plan_structure(plan_version)
+    sub_parent = {}                      # substage_id -> stage_id (для build_board)
+    for st in structure.get("stages") or []:
+        for sub in st.get("substages") or []:
+            sub_parent[sub["id"]] = st["id"]
+
+    reg = {d.get("filename"): d for d in docregistry.list_documents()}
+    allow = set(filenames) if filenames is not None else None
+
+    docs = []
+    for fname in store.list_documents():
+        if allow is not None and fname not in allow:
+            continue
+        d = store.find_by_filename(fname)
+        if not d:
+            continue
+        best = {}                        # substage_id -> максимальная уверенность
+        for r in store.sections_with_labels(d["id"]):
+            for s in (r.get("substages") or []):
+                sid = s.get("id")
+                conf = s.get("confidence") or 0.0
+                if sid in sub_parent and conf > best.get(sid, -1.0):
+                    best[sid] = conf
+        subs = [{"stage_id": sub_parent[sid], "substage_id": sid, "score": round(c, 3)}
+                for sid, c in best.items()]
+        e = reg.get(fname, {})
+        docs.append({
+            "filename": fname, "mime": e.get("mime"), "status": e.get("status"),
+            "keywords": e.get("keywords") or [],
+            "stage_ids": sorted({a["stage_id"] for a in subs}),
+            "substages": subs,
+        })
+    return structure.get("stages") or [], docs
+
+
 # ---------- Асинхронная очередь разметки (retry + backoff + возобновление) ----------
 _queue: "queue.Queue" = queue.Queue()
 _worker_started = False

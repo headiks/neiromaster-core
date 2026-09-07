@@ -211,9 +211,9 @@ def update_assignment_by_filename(filename: str, folders: list, stage_ids: list)
     переанализа. Подэтапы пересчитываются из новых stage_ids. Вектор не трогаем."""
     import db
     from psycopg.types.json import Json
-    row = db.query(f"SELECT embedding FROM {TABLE} WHERE filename = %s", (filename,), "one")
-    doc_vec = (row or {}).get("embedding")
-    subs = assign_substages(doc_vec, _substage_vectors(stage_ids or None)) if doc_vec else []
+    # Косинусную привязку к подэтапам убрали — её даёт LLM (docpipe). Обновляем только
+    # папки/этапы; substages в document_meta больше не ведём (доска читает LLM-разметку).
+    subs = []
     db.execute(
         f"""UPDATE {TABLE} SET folders=%s, stage_ids=%s, substages=%s, updated_at=%s
             WHERE filename=%s""",
@@ -300,7 +300,7 @@ def classify_full(summary: str, filename: str, sha256: str, *,
     """
     Полный расчёт метаданных документа для Варианта 1 и запись в БД:
       1) папки + этапы — существующей логикой classify.classify_document (по смыслу);
-      2) подэтапы — сходство вектора документа с векторами подэтапов его этапов;
+      2) подэтапы — НЕ здесь: их даёт LLM-разметка docpipe (доска/таблица);
       3) ключевые слова — из описания; эмбеддинг документа — сохраняем.
     Возвращает записанную строку.
     """
@@ -309,7 +309,9 @@ def classify_full(summary: str, filename: str, sha256: str, *,
 
     doc_cls = classify.classify_document(summary)          # {folders, stage_ids, candidates}
     doc_vec = get_embedding(summary or filename)
-    subs = assign_substages(doc_vec, _substage_vectors(doc_cls.get("stage_ids") or None))
+    # Привязка к подэтапам больше НЕ считается косинусом — её даёт LLM-разметка docpipe
+    # (см. docpipe.document_assignments, доска/таблица). Здесь оставляем пусто.
+    subs = []
 
     return upsert({
         "sha256": sha256, "filename": filename, "size_bytes": size_bytes, "mime": mime,
@@ -326,12 +328,14 @@ def record(sha256: str, filename: str, summary: str, folders: list, stage_ids: l
            uploaded_at: Optional[str] = None, uploaded_by: Optional[str] = None) -> dict:
     """
     Запись документа из пайплайна индексации: папки и этапы уже посчитаны там
-    (не дублируем classify), здесь добавляем эмбеддинг документа, привязку к
-    подэтапам (Вариант 1) и ключевые слова — и сохраняем строку.
+    (не дублируем classify), здесь добавляем эмбеддинг документа и ключевые слова.
+    Привязку к подэтапам ведёт LLM-разметка docpipe, не косинус.
     """
     from config import get_embedding
     doc_vec = get_embedding(summary or filename)
-    subs = assign_substages(doc_vec, _substage_vectors(stage_ids or None))
+    # Привязка к подэтапам больше НЕ считается косинусом — её даёт LLM-разметка docpipe
+    # (см. docpipe.document_assignments, доска/таблица). Здесь оставляем пусто.
+    subs = []
     return upsert({
         "sha256": sha256, "filename": filename, "size_bytes": size_bytes, "mime": mime,
         "status": "indexed", "uploaded_at": uploaded_at or time.strftime("%Y-%m-%dT%H:%M:%S"),
