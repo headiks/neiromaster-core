@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 import config
 import storage
 import indexing
+import docview
 import documents
 import folders
 import stages
@@ -48,7 +49,7 @@ async def get_document_substage_map(filename: str, user: dict = Depends(require_
     """Разбивка документа по подэтапам: какие куски текста к каким подэтапам отнесены и
     с какой уверенностью (косинус) — критерий попадания. Низкий score выдаёт ошибочные."""
     ensure_doc_access(user, filename)
-    data = indexing.document_substage_map(filename)
+    data = docview.document_substage_map(filename)
     if data is None:
         raise HTTPException(status_code=404, detail="Чанки документа не найдены")
     return data
@@ -59,15 +60,11 @@ async def reindex_document(filename: str, user: dict = Depends(require_admin)):
     """Переанализ документа (без повторного docling): обновляет папки/этапы по чанкам
     и синхронизирует запись в реестре метаданных."""
     ensure_doc_access(user, filename)
+    # reanalyze_document сам синхронизирует document_meta (доску «этапы ↔ документы»),
+    # поэтому отдельной досинхронизации здесь больше нет — один путь, без дрейфа.
     result = indexing.reanalyze_document(filename)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
-    try:
-        doc = next((d for d in indexing.list_documents() if d.get("filename") == filename), {})
-        documents.update_assignment_by_filename(
-            filename, result.get("folders") or [], doc.get("stage_ids") or [])
-    except Exception:
-        pass
     return result
 
 
@@ -187,7 +184,7 @@ async def get_document_labels(filename: str, user: dict = Depends(require_admin)
 async def get_document_chunks(filename: str, user: dict = Depends(require_admin)):
     """Подробности разбиения документа: чанки и вектор каждого чанка (для кнопки «Подробнее»)."""
     ensure_doc_access(user, filename)
-    detail = indexing.get_document_chunks(filename)
+    detail = docview.get_document_chunks(filename)
     if detail is None:
         raise HTTPException(status_code=404, detail="Чанки не найдены — документ ещё не проиндексирован")
     return detail
@@ -233,7 +230,7 @@ async def get_folders():
 @router.get("/folders/{slug}/chunks", dependencies=admin_only)
 async def get_folder_chunks(slug: str):
     """Чанки внутри смысловой папки — просмотр содержимого папки (текст + из какого документа)."""
-    return indexing.get_folder_chunks(slug)
+    return docview.get_folder_chunks(slug)
 
 
 @router.post("/folders", dependencies=admin_only)
