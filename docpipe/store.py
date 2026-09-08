@@ -41,6 +41,11 @@ def upsert_document(filename: str, content_hash: str, card: dict,
     changed=False, разбор/разметку можно пропустить."""
     existing = find_by_hash(content_hash)
     if existing:
+        # Тот же контент, но имя файла могло измениться (переименование/нормализация) —
+        # обновляем filename и карточку, иначе документ «теряется» при поиске по новому
+        # имени (find_by_filename), а доска/анализ его не видят.
+        db.execute("UPDATE documents SET filename = %s, doc_card = %s WHERE id = %s",
+                   (filename, Json(card or {}), existing["id"]))
         return existing["id"], False
     doc_id = _id()
     db.execute(
