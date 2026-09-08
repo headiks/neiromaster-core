@@ -52,3 +52,4 @@ qdrant_storage/
 Thumbs.db
 .DS_Store
 Классификация_документов.xlsx
+Классификация_per_chunk.xlsx
