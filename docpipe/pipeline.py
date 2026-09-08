@@ -79,24 +79,31 @@ def _parse(filepath: Path):
 
 
 def _label_section(sec: dict, repeated: set, card: dict, structure: dict, positions: list) -> dict:
-    """Метка одной секции: префильтр -> (при прохождении) LLM -> нормализация + матч профессий."""
+    """
+    Разметка одной секции по чанкам. Возвращает {"section": <метка секции>, "chunks": <чанки
+    со своими метками>}. Каждый чанк несёт СВОИ подэтапы (LLM размечает их отдельно), а метка
+    секции — их объединение (для доски и section_labels).
+    """
     text = sec.get("text") or ""
     ok, reason = core.prefilter(text)
     if ok and text.strip() in repeated:
         ok, reason = False, "running_header"
     if not ok:
-        return {"is_meaningful": False, "reject_reason": reason, "substages": [], "stages": [],
+        junk = {"is_meaningful": False, "reject_reason": reason, "substages": [], "stages": [],
                 "professions": [], "is_general": False, "prof_conf": None, "why": None}
+        return {"section": junk, "chunks": []}
 
     raw = llm.section_labels(text, sec.get("heading_path") or [], card, structure, positions)
-    norm = core.coerce_section_labels(raw, structure)
-    matched, prof_conf = professions.match_to_staffing(norm["professions"], positions)
-    norm["professions"] = matched
-    norm["is_general"] = norm["is_general"] and not matched
-    norm["prof_conf"] = prof_conf
-    norm["reject_reason"] = None
-    norm["chunk_markers"] = raw.get("chunks") or []   # рекомендация модели, как резать на чанки
-    return norm
+    chunk_labels = core.split_labeled_chunks(text, raw.get("chunks"), structure,
+                                             max_tokens=CHUNK_MAX_TOKENS)
+    matched, prof_conf = professions.match_to_staffing(
+        [str(p).strip() for p in (raw.get("professions") or []) if str(p).strip()], positions)
+    section = core.section_from_chunks(chunk_labels, structure, {
+        "is_meaningful": bool(raw.get("is_meaningful", True)),
+        "professions": matched, "prof_conf": prof_conf, "why": raw.get("why"),
+        "reject_reason": None,
+    })
+    return {"section": section, "chunks": chunk_labels}
 
 
 def ingest(filepath, filename: str = None, plan_version: str = "current",
@@ -128,19 +135,11 @@ def ingest(filepath, filename: str = None, plan_version: str = "current",
     for seq, (sec, sid) in enumerate(zip(sections, section_ids)):
         if seq <= resume_from:
             continue                                   # уже размечено — возобновление
-        label = _label_section(sec, repeated, card, structure, positions)
-        store.upsert_section_label(sid, label, source="llm", plan_version=plan_version,
+        result = _label_section(sec, repeated, card, structure, positions)
+        store.upsert_section_label(sid, result["section"], source="llm", plan_version=plan_version,
                                    model=llm.MODEL, prompt_version=llm.PROMPT_VERSION)
-        # Чанки — по рекомендации модели (логически завершённые куски); текст режем из
-        # исходника по маркерам. Не сработало — детерминированный фолбэк по предложениям.
-        chunks = core.chunks_from_markers(sec["text"], label.get("chunk_markers")) or core.to_chunks(sec["text"])
-        # Страховка: слишком крупный логический кусок не влезет в окно эмбеддера (bge-m3, ~4096)
-        # и обрежется. Такой дорезаем по предложениям; остальные оставляем как задумала модель.
-        # ponytail: потолок = окно эмбеддинга; env NEIROMASTER_DOCPIPE_CHUNK_MAX_TOKENS.
-        capped = []
-        for c in chunks:
-            capped.extend(core.to_chunks(c) if core.est_tokens(c) > CHUNK_MAX_TOKENS else [c])
-        store.replace_chunks(sid, capped or chunks, EMBED_VERSION)
+        # Чанки со СВОИМИ метками (LLM разметил каждый отдельно). Служебная секция -> без чанков.
+        store.replace_chunks(sid, result["chunks"], EMBED_VERSION)
         store.update_job(job_id, done=seq + 1, last_seq=seq)
 
     qdrant_sink.sink_document(doc_id)                  # запись производной копии в Qdrant
@@ -179,9 +178,10 @@ def relabel_candidates(substage_id: str, plan_version: str = "current", top_k: i
         sec = _section_row(sid)
         if not sec:
             continue
-        label = _label_section(sec, set(), _doc_card_for(sec["doc_id"]), structure, positions)
-        store.upsert_section_label(sid, label, source="llm", plan_version=plan_version,
+        result = _label_section(sec, set(), _doc_card_for(sec["doc_id"]), structure, positions)
+        store.upsert_section_label(sid, result["section"], source="llm", plan_version=plan_version,
                                    model=llm.MODEL, prompt_version=llm.PROMPT_VERSION)
+        store.replace_chunks(sid, result["chunks"], EMBED_VERSION)
         touched += 1
     qdrant_sink.reindex()
     return {"relabeled": touched, "candidates": len(section_ids)}

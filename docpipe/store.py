@@ -104,13 +104,23 @@ def upsert_section_label(section_id: str, label: dict, source: str,
 
 # ---------- Чанки ----------
 def replace_chunks(section_id: str, chunks: list, embedding_version: str) -> list:
+    """chunks — [{text, substages, stages, is_general}] (per-chunk метки от LLM) ИЛИ [str]
+    (старый формат/фолбэк — тогда метки пустые). Каждый чанк хранит СВОИ подэтапы."""
     db.execute("DELETE FROM chunks WHERE section_id = %s", (section_id,))
     ids = []
-    for seq, text in enumerate(chunks):
+    for seq, ch in enumerate(chunks):
         cid = _id()
+        if isinstance(ch, dict):
+            text = ch.get("text") or ""
+            subs = ch.get("substages") or []
+            stages = list(ch.get("stages") or [])
+            is_general = bool(ch.get("is_general"))
+        else:
+            text, subs, stages, is_general = ch, [], [], False
         db.execute(
-            "INSERT INTO chunks (id, section_id, seq, text, embedding_version) VALUES (%s,%s,%s,%s,%s)",
-            (cid, section_id, seq, text, embedding_version),
+            "INSERT INTO chunks (id, section_id, seq, text, embedding_version, "
+            "substages, stages, is_general) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+            (cid, section_id, seq, text, embedding_version, Json(subs), stages, is_general),
         )
         ids.append(cid)
     return ids
@@ -128,6 +138,22 @@ def iter_labeled_sections():
 
 def list_chunks(section_id: str) -> list:
     return db.query("SELECT * FROM chunks WHERE section_id = %s ORDER BY seq", (section_id,))
+
+
+def chunks_for_substage(substage_id: str, plan_version: str = "current") -> list:
+    """ВСЕ чанки, размеченные данным подэтапом (per-chunk метка содержит его id) — источник
+    для «вычленить все чанки на подэтап». Джойн до документа для имени файла и заголовков."""
+    return db.query(
+        "SELECT c.id AS chunk_id, c.text, c.substages, c.is_general, "
+        "       s.heading_path, s.page_from, d.filename, d.id AS doc_id "
+        "FROM chunks c "
+        "JOIN sections s ON s.id = c.section_id "
+        "JOIN documents d ON d.id = s.doc_id "
+        "JOIN section_labels l ON l.section_id = s.id "
+        "WHERE c.substages @> %s::jsonb AND COALESCE(l.plan_version, %s) = %s "
+        "ORDER BY d.filename, s.seq, c.seq",
+        (json.dumps([{"id": substage_id}]), plan_version, plan_version),
+    )
 
 
 # ---------- Задачи разметки (очередь, возобновление) ----------

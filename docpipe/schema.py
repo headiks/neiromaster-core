@@ -62,17 +62,26 @@ SCHEMA_STATEMENTS = (
         labeled_at    TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
-    # Мелкие чанки: метки НЕ пересчитываются, наследуются от секции при сборке Qdrant.
+    # Мелкие чанки с per-chunk метками: LLM размечает КАЖДЫЙ чанк своими подэтапами
+    # (раньше чанк наследовал метку всей секции). substages — [{id, confidence}].
     """
     CREATE TABLE IF NOT EXISTS chunks (
         id                TEXT PRIMARY KEY,
         section_id        TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
         seq               INTEGER NOT NULL DEFAULT 0,
         text              TEXT NOT NULL DEFAULT '',
-        embedding_version TEXT
+        embedding_version TEXT,
+        substages         JSONB NOT NULL DEFAULT '[]',
+        stages            TEXT[] NOT NULL DEFAULT '{}',
+        is_general        BOOLEAN NOT NULL DEFAULT FALSE
     )
     """,
+    # Миграция уже существующей таблицы chunks (до per-chunk меток): добавляем колонки.
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS substages JSONB NOT NULL DEFAULT '[]'",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS stages TEXT[] NOT NULL DEFAULT '{}'",
+    "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS is_general BOOLEAN NOT NULL DEFAULT FALSE",
     "CREATE INDEX IF NOT EXISTS idx_chunks_section ON chunks(section_id)",
+    "CREATE INDEX IF NOT EXISTS idx_chunks_substages ON chunks USING GIN (substages)",
     # Очередь разметки: документ = задача, возобновляется с последней размеченной секции.
     """
     CREATE TABLE IF NOT EXISTS label_jobs (

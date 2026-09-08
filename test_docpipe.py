@@ -112,6 +112,71 @@ def test_stages_from_substages():
     assert core.valid_substage_ids(STRUCTURE) == {"firstday.equipment", "firstday.rules", "training.shift"}
 
 
+# ---------- Сегментация: жёсткая нарезка длинного текста без границ предложений ----------
+def test_split_section_hard_splits_boundaryless_text():
+    # «Таблица»/список из docx без точек — раньше давал один гигантский блок и обрезался в промпте.
+    text = " ".join(f"строка{i}" for i in range(4000))     # ~много токенов, нет .!?
+    parts = core.split_section_text(text, max_tokens=200)
+    assert len(parts) >= 5, "длинный текст без предложений должен резаться по словам"
+    assert all(core.est_tokens(p) <= 220 for p in parts), "ни один кусок не превышает окно"
+    assert "".join(parts).replace(" ", "") == text.replace(" ", ""), "текст не потерян"
+
+
+# ---------- Per-chunk метки ----------
+def test_coerce_chunk_label():
+    raw = {"substages": [{"id": "firstday.equipment", "confidence": 0.9},
+                         {"id": "NETU", "confidence": 0.95},           # нет в плане -> отброшен
+                         {"id": "firstday.rules", "confidence": 0.3}], # < порога -> отброшен
+           "is_general": True}
+    out = core.coerce_chunk_label(raw, STRUCTURE)
+    assert [s["id"] for s in out["substages"]] == ["firstday.equipment"]
+    assert out["stages"] == ["firstday"]
+    assert out["is_general"] is False            # есть подэтап -> не general
+
+
+def test_split_labeled_chunks_per_chunk_substages():
+    text = "Выдача СИЗ и каски работнику. Общие положения о распорядке в компании."
+    raw_chunks = [
+        {"marker": "Выдача СИЗ и каски", "substages": [{"id": "firstday.equipment", "confidence": 0.9}], "is_general": False},
+        {"marker": "Общие положения о распорядке", "substages": [], "is_general": True},
+    ]
+    out = core.split_labeled_chunks(text, raw_chunks, STRUCTURE, max_tokens=400)
+    assert len(out) == 2
+    assert out[0]["text"].startswith("Выдача СИЗ") and [s["id"] for s in out[0]["substages"]] == ["firstday.equipment"]
+    assert out[1]["substages"] == [] and out[1]["is_general"] is True    # второй чанк — общий, БЕЗ подэтапа
+    # именно то, о чём просил HR: ОДИН чанк на подэтап, соседний общий чанк подэтапа не получает
+
+
+def test_split_labeled_chunks_fallback_no_markers():
+    text = " ".join(f"Предложение номер {i} с достаточной длиной для чанка." for i in range(30))
+    out = core.split_labeled_chunks(text, [], STRUCTURE, max_tokens=40)
+    assert out and all(c["substages"] == [] for c in out)   # без маркеров — фолбэк, метки пустые
+
+
+def test_section_from_chunks_is_union():
+    chunks = [
+        {"substages": [{"id": "firstday.equipment", "confidence": 0.7}], "is_general": False},
+        {"substages": [{"id": "firstday.equipment", "confidence": 0.9},
+                       {"id": "training.shift", "confidence": 0.6}], "is_general": False},
+        {"substages": [], "is_general": True},
+    ]
+    sec = core.section_from_chunks(chunks, STRUCTURE, {"is_meaningful": True, "professions": [], "why": "x"})
+    ids = {s["id"]: s["confidence"] for s in sec["substages"]}
+    assert ids == {"firstday.equipment": 0.9, "training.shift": 0.6}   # максимум уверенности по чанкам
+    assert set(sec["stages"]) == {"firstday", "training"}
+    assert sec["is_general"] is False                                   # есть подэтапы -> не general
+
+
+def test_section_general_only_when_no_substage():
+    sec = core.section_from_chunks([{"substages": [], "is_general": True}], STRUCTURE,
+                                   {"is_meaningful": True, "professions": [], "why": ""})
+    assert sec["substages"] == [] and sec["is_general"] is True
+    # но если есть профессия — секция специфична, не общая
+    sec2 = core.section_from_chunks([{"substages": [], "is_general": True}], STRUCTURE,
+                                    {"is_meaningful": True, "professions": ["водитель"], "why": ""})
+    assert sec2["is_general"] is False
+
+
 # ---------- Наследование меток секции в чанк ----------
 def test_inherit_labels():
     sec = {"is_meaningful": True, "substages": [{"id": "training.shift", "confidence": 0.7}],

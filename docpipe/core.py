@@ -82,23 +82,50 @@ def repeated_lines(pages: list, threshold: float = 0.6) -> set:
 
 
 # ---------- Сегментация секции и мелкий чанкинг ----------
-def split_section_text(text: str, max_tokens: int = 1200) -> list:
-    """Секция ≤ max_tokens идёт целиком; больше — режется по границам предложений на куски
-    не длиннее max_tokens. Предложения не рвём."""
-    text = (text or "").strip()
-    if est_tokens(text) <= max_tokens:
-        return [text] if text else []
+def _hard_split(unit: str, max_tokens: int) -> list:
+    """Аварийная нарезка одного «неделимого» куска (нет границ предложений — таблица,
+    список, docx без точек) по словам на части ≤ max_tokens. Гарантирует, что ни один
+    кусок не превысит окно — иначе большие документы обрезались бы в промпте LLM."""
+    words = (unit or "").split()
+    if not words:
+        return []
     parts, buf = [], []
-    for sent in split_sentences(text):
-        trial = " ".join(buf + [sent])
-        if buf and est_tokens(trial) > max_tokens:
+    for w in words:
+        buf.append(w)
+        if est_tokens(" ".join(buf)) >= max_tokens:
+            parts.append(" ".join(buf))
+            buf = []
+    if buf:
+        parts.append(" ".join(buf))
+    return parts
+
+
+def split_section_text(text: str, max_tokens: int = 1200) -> list:
+    """Режет секцию на куски НЕ длиннее max_tokens. Сначала по границам предложений/абзацев;
+    если отдельная единица всё равно длиннее окна (таблица, список без точек) — дорезаем по
+    словам (_hard_split). Так ни одна секция не превысит max_tokens и не обрежется в промпте
+    (раньше docx-таблица давала секцию на 12k токенов, и LLM видел лишь её начало)."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    if est_tokens(text) <= max_tokens:
+        return [text]
+    parts, buf = [], []
+    for sent in (split_sentences(text) or [text]):
+        if est_tokens(sent) > max_tokens:            # единица сама больше окна — дорезаем по словам
+            if buf:
+                parts.append(" ".join(buf))
+                buf = []
+            parts.extend(_hard_split(sent, max_tokens))
+            continue
+        if buf and est_tokens(" ".join(buf + [sent])) > max_tokens:
             parts.append(" ".join(buf))
             buf = [sent]
         else:
             buf.append(sent)
     if buf:
         parts.append(" ".join(buf))
-    return parts
+    return [p for p in parts if p.strip()]
 
 
 def to_chunks(text: str, min_tokens: int = 200, max_tokens: int = 400, overlap_sentences: int = 1) -> list:
@@ -248,7 +275,8 @@ _INHERIT_KEYS = ("is_meaningful", "substages", "stages", "professions", "is_gene
 
 
 def inherit_labels(section_label: dict) -> dict:
-    """Метки чанка = копия меток родительской секции (source=inherited). Не пересчитываем."""
+    """Метки чанка = копия меток родительской секции (source=inherited). Не пересчитываем.
+    Используется как фолбэк, если модель не дала per-chunk разметку (старый формат)."""
     src = section_label or {}
     out = {k: src.get(k) for k in _INHERIT_KEYS}
     out["substages"] = list(out.get("substages") or [])
@@ -258,3 +286,97 @@ def inherit_labels(section_label: dict) -> dict:
     out["is_general"] = bool(out.get("is_general", False))
     out["source"] = "inherited"
     return out
+
+
+# ---------- Per-chunk разметка: каждый чанк несёт СВОИ подэтапы ----------
+# Раньше чанк наследовал метки всей секции (весь блок → все его подэтапы). Из-за этого
+# один конкретный чанк на подэтап был неотличим от соседних. Теперь модель размечает
+# КАЖДЫЙ чанк отдельно (в том же вызове), и подэтап получают только релевантные чанки.
+def _coerce_substages(raw_subs, valid: set) -> list:
+    """Валидные подэтапы с confidence >= порога, топ-N по уверенности (та же логика, что у секции)."""
+    subs, seen = [], set()
+    for item in raw_subs or []:
+        if isinstance(item, dict):
+            sid = str(item.get("id") or "").strip()
+            conf = item.get("confidence")
+        else:
+            sid, conf = str(item).strip(), None
+        if sid and sid in valid and sid not in seen:
+            seen.add(sid)
+            try:
+                c = float(conf)
+            except (TypeError, ValueError):
+                c = 1.0
+            c = max(0.0, min(1.0, c))
+            if c >= SUBSTAGE_MIN_CONF:
+                subs.append({"id": sid, "confidence": c})
+    subs.sort(key=lambda x: x["confidence"], reverse=True)
+    return subs[:SUBSTAGE_MAX]
+
+
+def coerce_chunk_label(raw_chunk: dict, structure: dict) -> dict:
+    """Нормализует метку ОДНОГО чанка от модели: {substages:[{id,conf}], is_general}."""
+    valid = valid_substage_ids(structure)
+    subs = _coerce_substages((raw_chunk or {}).get("substages"), valid)
+    is_general = bool((raw_chunk or {}).get("is_general")) and not subs
+    return {
+        "substages": subs,
+        "stages": stages_from_substages([s["id"] for s in subs], structure),
+        "is_general": is_general,
+    }
+
+
+def split_labeled_chunks(text: str, raw_chunks: list, structure: dict,
+                         max_tokens: int = 1200) -> list:
+    """
+    Режет секцию на чанки по маркерам модели и вешает на каждый ЕГО метки.
+    raw_chunks — [{marker, substages, is_general}] от LLM. Возвращает
+    [{text, substages, stages, is_general}]. Текст — дословный срез исходника (модель
+    указывает только границы, не переписывает). Слишком крупный чанк дорезаем по словам,
+    метки наследуются на его части. Пусто/сбой маркеров -> фолбэк to_chunks без меток.
+    """
+    raw_chunks = raw_chunks or []
+    markers = [(c.get("marker") if isinstance(c, dict) else c) or "" for c in raw_chunks]
+    pieces = chunks_from_markers(text, markers)
+    out = []
+    if pieces and len(pieces) >= len(raw_chunks):
+        # chunks_from_markers мог добавить «хвост до первого маркера» в начало — тогда
+        # число кусков на 1 больше числа маркеров; этот головной кусок метим как общий.
+        offset = len(pieces) - len(raw_chunks)
+        for i, piece in enumerate(pieces):
+            raw = raw_chunks[i - offset] if i >= offset else {}
+            lbl = coerce_chunk_label(raw if isinstance(raw, dict) else {}, structure)
+            for part in (split_section_text(piece, max_tokens) or [piece]):
+                out.append({"text": part, **lbl})
+        return out
+    # маркеры не сработали — детерминированный фолбэк без per-chunk меток
+    for part in to_chunks(text):
+        out.append({"text": part, "substages": [], "stages": [], "is_general": False})
+    return out
+
+
+def section_from_chunks(chunk_labels: list, structure: dict, base: dict) -> dict:
+    """Метка СЕКЦИИ = объединение меток её чанков (для доски и section_labels):
+    подэтап секции = максимальная уверенность среди чанков; is_general — если ни один чанк
+    не дал подэтапа, но есть общий по смыслу. base несёт секционные поля (is_meaningful,
+    professions, why, prof_conf, reject_reason)."""
+    best = {}
+    for ch in chunk_labels or []:
+        for s in ch.get("substages") or []:
+            if s["confidence"] > best.get(s["id"], -1.0):
+                best[s["id"]] = s["confidence"]
+    subs = [{"id": sid, "confidence": c} for sid, c in best.items()]
+    subs.sort(key=lambda x: x["confidence"], reverse=True)
+    subs = subs[:SUBSTAGE_MAX]
+    any_general = any(ch.get("is_general") for ch in chunk_labels or [])
+    professions = list(base.get("professions") or [])
+    return {
+        "is_meaningful": bool(base.get("is_meaningful", True)),
+        "substages": subs,
+        "stages": stages_from_substages([s["id"] for s in subs], structure),
+        "professions": professions,
+        "is_general": (not subs) and any_general and not professions,
+        "prof_conf": base.get("prof_conf"),
+        "why": (str(base.get("why") or "")).strip()[:500],
+        "reject_reason": base.get("reject_reason"),
+    }

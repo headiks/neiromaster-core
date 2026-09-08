@@ -81,6 +81,19 @@ def _ensure_collection(recreate: bool = False):
             pass
 
 
+def _chunk_label(ch: dict, section_label: dict) -> dict:
+    """Метка чанка = ЕГО собственные подэтапы (per-chunk от LLM) + профессии/версия от секции.
+    Раньше чанк наследовал подэтапы всей секции — теперь у каждого чанка свои."""
+    return {
+        "is_meaningful": True,
+        "substages": ch.get("substages") or [],
+        "stages": list(ch.get("stages") or []),
+        "professions": list(section_label.get("professions") or []),
+        "is_general": bool(ch.get("is_general")),
+        "plan_version": section_label.get("plan_version"),
+    }
+
+
 def _payload(level, doc_id, section_id, chunk_id, sec, label) -> dict:
     subs = label.get("substages") or []
     sub_ids = [s.get("id") if isinstance(s, dict) else s for s in subs]
@@ -119,9 +132,10 @@ def reindex(batch: int = 128) -> dict:
                                   payload=_payload("section", row["doc_id"], sid, None, sec, label)))
         n_sec += 1
         for ch in store.list_chunks(sid):
-            csec = dict(sec); csec["text"] = ch["text"]
             points.append(PointStruct(id=_uuid("chunk", ch["id"]), vector=get_embedding(ch["text"]),
-                                      payload=_payload("chunk", row["doc_id"], sid, ch["id"], csec, label)))
+                                      payload=_payload("chunk", row["doc_id"], sid, ch["id"],
+                                                       {**sec, "text": ch["text"]},
+                                                       _chunk_label(ch, label))))
             n_chunk += 1
         if len(points) >= batch:
             flush()
@@ -147,9 +161,10 @@ def sink_document(doc_id: str) -> dict:
                                   payload=_payload("section", doc_id, sid, None, sec, label)))
         n_sec += 1
         for ch in store.list_chunks(sid):
-            csec = dict(sec); csec["text"] = ch["text"]
             points.append(PointStruct(id=_uuid("chunk", ch["id"]), vector=get_embedding(ch["text"]),
-                                      payload=_payload("chunk", doc_id, sid, ch["id"], csec, label)))
+                                      payload=_payload("chunk", doc_id, sid, ch["id"],
+                                                       {**sec, "text": ch["text"]},
+                                                       _chunk_label(ch, label))))
             n_chunk += 1
     if points:
         client.upsert(COLLECTION, points=points)
@@ -157,28 +172,27 @@ def sink_document(doc_id: str) -> dict:
 
 
 def retrieve(substage_id: str, position: str = "", plan_version: str = "current",
-             limit: int = 8) -> list:
-    """Выборка СЕКЦИЙ под подэтап и должность: filter substage AND (profession=position OR
-    is_general), мягкий приоритет своей профессии (×1.2). При < 3 результатах — добор общими."""
+             limit: int = 8, query_text: str = "") -> list:
+    """Выборка ЧАНКОВ под подэтап и должность: filter substage AND (profession=position OR
+    is_general), ранжирование по близости к запросу, мягкий приоритет своей профессии (×1.2).
+    Теперь на уровне ЧАНКОВ (раньше секций) — попадают именно релевантные куски, а не весь блок."""
     def _search(must):
-        vec = get_embedding(substage_id)   # запрос — по id подэтапа; вызывающий может передать текст
+        vec = get_embedding(query_text or substage_id)
         return client.query_points(COLLECTION, query=vec, limit=max(limit * 2, limit),
                                    with_payload=True, query_filter=Filter(must=must)).points
 
     base = [
-        FieldCondition(key="level", match=MatchValue(value="section")),
-        FieldCondition(key="is_meaningful", match=MatchValue(value=True)),
+        FieldCondition(key="level", match=MatchValue(value="chunk")),
         FieldCondition(key="substages", match=MatchValue(value=substage_id)),
         FieldCondition(key="plan_version", match=MatchValue(value=plan_version)),
     ]
-    prof_or_general = Filter(should=[
-        FieldCondition(key="professions", match=MatchValue(value=position)) if position else
-        FieldCondition(key="is_general", match=MatchValue(value=True)),
-        FieldCondition(key="is_general", match=MatchValue(value=True)),
-    ])
-    hits = _search(base + [prof_or_general])
-    if len(hits) < RETRIEVE_MIN:      # добор общими
-        hits = _search(base + [FieldCondition(key="is_general", match=MatchValue(value=True))])
+    if position:
+        hits = _search(base + [Filter(should=[
+            FieldCondition(key="professions", match=MatchValue(value=position)),
+            FieldCondition(key="is_general", match=MatchValue(value=True)),
+        ])])
+    else:
+        hits = _search(base)
 
     def score(h):
         pl = h.payload or {}
@@ -187,6 +201,7 @@ def retrieve(substage_id: str, position: str = "", plan_version: str = "current"
 
     hits = sorted(hits, key=score, reverse=True)[:limit]
     return [{
+        "chunk_id": (h.payload or {}).get("chunk_id"),
         "section_id": (h.payload or {}).get("section_id"),
         "doc_id": (h.payload or {}).get("doc_id"),
         "heading_path": (h.payload or {}).get("heading_path") or [],
@@ -195,3 +210,16 @@ def retrieve(substage_id: str, position: str = "", plan_version: str = "current"
         "text": (h.payload or {}).get("text") or "",
         "score": round(score(h), 4),
     } for h in hits]
+
+
+def all_chunks_for_substage(substage_id: str, plan_version: str = "current") -> list:
+    """ВСЕ чанки, размеченные подэтапом (детерминированно, из PG — не вектор): полное
+    «вычленение» всех кусков на подэтап для ответов на вопросы. См. store.chunks_for_substage."""
+    rows = store.chunks_for_substage(substage_id, plan_version)
+    return [{
+        "chunk_id": r["chunk_id"], "doc_id": r["doc_id"], "filename": r["filename"],
+        "heading_path": r.get("heading_path") or [], "page": r.get("page_from"),
+        "confidence": next((s.get("confidence") for s in (r.get("substages") or [])
+                            if s.get("id") == substage_id), None),
+        "text": r.get("text") or "",
+    } for r in rows]
