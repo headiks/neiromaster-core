@@ -12,6 +12,7 @@ import documents
 import folders
 import classify
 import users
+import activitylog
 from config import MAX_UPLOAD_BYTES
 from deps import _bg, require_admin, admin_only, owner_only, can_see_doc, visible_documents, ensure_doc_access
 
@@ -119,6 +120,8 @@ async def upload_document(file: UploadFile = File(...), user: dict = Depends(req
         raise HTTPException(status_code=400, detail=str(e))
 
     job = indexing.enqueue_document(filepath)
+    activitylog.log("action", user=user, path="/documents/upload",
+                    detail={"action": "document_upload", "filename": file.filename})
 
     # Точная разметка docpipe (двухпроходная LLM: карточка документа -> метки секций
     # по этапам/подэтапам/профессиям). Идёт параллельно фолдер-индексации для RAG.

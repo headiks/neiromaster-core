@@ -7,6 +7,8 @@ import auth
 import users
 import questions
 import employees as adaptation
+import messaging
+import activitylog
 from deps import _set_session_cookie, current_user, require_setup_done, logged_in
 
 router = APIRouter()
@@ -42,7 +44,10 @@ async def api_login(req: LoginRequest, request: Request, response: Response):
     try:
         token, user = auth.login(req.username, req.password, client=client)
     except ValueError as e:
+        activitylog.log("login_failed", request=request,
+                        detail={"username": (req.username or "").strip().lower()})
         raise HTTPException(status_code=401, detail=str(e))
+    activitylog.log("login", user=user, request=request)
     _set_session_cookie(response, token)
     return {
         "username": user["username"],
@@ -69,7 +74,9 @@ async def api_register(req: RegisterRequest):
 
 @router.post("/api/logout")
 async def api_logout(request: Request, response: Response):
-    auth.logout(request.cookies.get(auth.COOKIE_NAME))
+    token = request.cookies.get(auth.COOKIE_NAME)
+    activitylog.log("logout", user=auth.get_session_user(token), request=request)
+    auth.logout(token)
     response.delete_cookie(auth.COOKIE_NAME, path="/")
     return {"logged_out": True}
 
@@ -123,3 +130,18 @@ async def api_my_schedule(user: dict = Depends(require_setup_done)):
 async def api_my_questions(user: dict = Depends(require_setup_done)):
     """Свои эскалированные вопросы и ответы на них от администратора."""
     return {"questions": questions.list_for_user(user["id"])}
+
+
+@router.get("/api/my/messages", dependencies=logged_in)
+async def api_my_messages(user: dict = Depends(require_setup_done)):
+    """Инбокс: сообщения плана, которые уже наступили по расписанию и доставлены."""
+    return {"messages": messaging.inbox(user["id"]),
+            "unread": messaging.unread_count(user["id"])}
+
+
+@router.post("/api/my/messages/{message_id}/read", dependencies=logged_in)
+async def api_mark_message_read(message_id: str, user: dict = Depends(require_setup_done)):
+    """Отметить доставленное сообщение прочитанным."""
+    if not messaging.mark_read(user["id"], message_id):
+        raise HTTPException(status_code=404, detail="Сообщение не найдено или уже прочитано")
+    return {"read": True}

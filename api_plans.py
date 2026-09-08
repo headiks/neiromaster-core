@@ -1,6 +1,6 @@
 """Конструктор плана адаптации: планы, генерация сообщений, экспорт, фоновые задачи."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from fastapi.responses import FileResponse
 
@@ -8,7 +8,9 @@ import db
 import users
 import planner
 import indexing
-from deps import _bg, admin_only
+import messaging
+import activitylog
+from deps import _bg, admin_only, require_admin
 
 router = APIRouter()
 
@@ -34,10 +36,13 @@ async def get_plans():
     return {"plans": planner.list_plans()}
 
 
-@router.post("/plans", dependencies=admin_only)
-async def create_plan(req: PlanRequest):
+@router.post("/plans")
+async def create_plan(req: PlanRequest, user: dict = Depends(require_admin)):
     plan = planner.normalize_plan(req.model_dump())
     planner.save_plan(plan)
+    activitylog.log("action", user=user, path="/plans",
+                    detail={"action": "plan_create", "plan_id": plan.get("id"),
+                            "title": plan.get("title")})
     return plan
 
 
@@ -120,8 +125,8 @@ async def generate_plan(plan_id: str):
     return planner.start_generation(plan, positions=_staffing_positions())
 
 
-@router.post("/plans/{plan_id}/rollout", dependencies=admin_only)
-async def rollout_plan(plan_id: str):
+@router.post("/plans/{plan_id}/rollout")
+async def rollout_plan(plan_id: str, user: dict = Depends(require_admin)):
     """Применить готовый план ко всем сотрудникам: назначить план каждому сотруднику и
     запустить фоновую генерацию содержания под каждую уникальную должность из штатки.
     Прогресс — через GET /jobs/{job_id}. Сотрудник дальше видит план своей профессии."""
@@ -133,6 +138,11 @@ async def rollout_plan(plan_id: str):
     # Назначаем план всем сотрудникам, чтобы каждый увидел его в кабинете (расписание
     # подставляется под его должность). Роли админа/владельца не трогаем.
     db.execute("UPDATE users SET plan_id = %s WHERE role = %s", (plan_id, users.ROLE_EMPLOYEE))
+    activitylog.log("action", user=user, path=f"/plans/{plan_id}/rollout",
+                    detail={"action": "plan_rollout", "plan_id": plan_id})
+    # Материализуем расписание-инстансы сразу (у кого есть дата выхода), не дожидаясь
+    # следующего тика планировщика — фоново, чтобы не держать ответ.
+    _bg(messaging.ensure_all)
     return planner.start_generation(plan, positions=_staffing_positions())
 
 
