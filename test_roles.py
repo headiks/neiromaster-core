@@ -115,6 +115,42 @@ def test_dir_slug_is_safe_path_segment():
     assert "/" not in users.dir_slug({"id": "x/y"})
 
 
+# ---------- Несколько суперадминов ----------
+def test_multiple_owners_promote_and_last_guard():
+    """Админа можно повысить сразу до owner; последнего owner снять/удалить нельзя."""
+    saved = {}
+    orig_get, orig_save, orig_cnt = users.get_user, users._save_user, users.count_owners
+    try:
+        users._save_user = lambda u: saved.update(u)
+
+        # повышение админа до суперадмина (owner) напрямую — при 1 существующем owner
+        users.get_user = lambda uid: {"id": uid, "role": "admin", "hash": "x", "active": True}
+        users.count_owners = lambda active_only=False: 1
+        assert users.set_role("a", "owner")["role"] == "owner"
+
+        # понижение owner, когда он НЕ последний — можно
+        users.get_user = lambda uid: {"id": uid, "role": "owner", "hash": "x", "active": True}
+        users.count_owners = lambda active_only=False: 2
+        assert users.set_role("o2", "admin")["role"] == "admin"
+
+        # последнего owner снять нельзя
+        users.count_owners = lambda active_only=False: 1
+        try:
+            users.set_role("o1", "admin")
+            assert False, "последний owner не должен сниматься"
+        except ValueError as e:
+            assert "последний" in str(e).lower()
+
+        # и удалить последнего owner нельзя
+        try:
+            users.delete_user("o1")
+            assert False, "последний owner не должен удаляться"
+        except ValueError as e:
+            assert "последний" in str(e).lower()
+    finally:
+        users.get_user, users._save_user, users.count_owners = orig_get, orig_save, orig_cnt
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

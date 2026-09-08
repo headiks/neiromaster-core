@@ -167,6 +167,29 @@ def test_section_from_chunks_is_union():
     assert sec["is_general"] is False                                   # есть подэтапы -> не general
 
 
+def test_fill_undecided_chunks_inherits_section():
+    # Строки таблицы/продолжения перечня модель оставила без подэтапа и НЕ общими →
+    # наследуют тему секции. Явно общий чанк не трогаем.
+    chunks = [
+        {"substages": [{"id": "firstday.equipment", "confidence": 0.9}], "stages": ["firstday"], "is_general": False},
+        {"substages": [], "stages": [], "is_general": False},   # «не решила» — строка таблицы
+        {"substages": [], "stages": [], "is_general": True},    # явно общий — не трогать
+    ]
+    section = core.section_from_chunks(chunks, STRUCTURE, {"is_meaningful": True, "professions": [], "why": ""})
+    core.fill_undecided_chunks(chunks, section)
+    assert [s["id"] for s in chunks[1]["substages"]] == ["firstday.equipment"]   # унаследовал
+    assert chunks[1].get("source") == "inherited"
+    assert chunks[2]["substages"] == [] and chunks[2]["is_general"] is True       # общий не тронут
+
+
+def test_fill_undecided_no_anchor_keeps_empty():
+    # Если у секции нет темы (все чанки общие) — наследовать нечего, остаётся пусто.
+    chunks = [{"substages": [], "stages": [], "is_general": False}]
+    section = core.section_from_chunks(chunks, STRUCTURE, {"is_meaningful": True, "professions": [], "why": ""})
+    core.fill_undecided_chunks(chunks, section)
+    assert chunks[0]["substages"] == []
+
+
 def test_section_general_only_when_no_substage():
     sec = core.section_from_chunks([{"substages": [], "is_general": True}], STRUCTURE,
                                    {"is_meaningful": True, "professions": [], "why": ""})
@@ -219,9 +242,11 @@ def test_professions_match_exact_and_embed():
 def test_upsert_document_idempotent():
     _db._exec_log.clear()
     _db._query_hook = lambda sql, params=(), fetch="all": {"id": "doc1"}   # hash уже есть
-    doc_id, changed = store.upsert_document("f.pdf", "HASH", {}, "docling", "qwen3:14b")
-    assert doc_id == "doc1" and changed is False
-    assert _db._exec_log == []                      # ничего не вставили
+    doc_id, changed = store.upsert_document("f-renamed.pdf", "HASH", {}, "docling", "qwen3:14b")
+    assert doc_id == "doc1" and changed is False    # не пересоздаём (тот же контент)
+    # но filename/карточку обновляем (файл могли переименовать) — INSERT НЕ делаем
+    assert not any("INSERT INTO documents" in sql for sql, _ in _db._exec_log)
+    assert any(sql.startswith("UPDATE documents") for sql, _ in _db._exec_log)
 
     _db._query_hook = lambda sql, params=(), fetch="all": None            # нового hash нет
     doc_id2, changed2 = store.upsert_document("f.pdf", "HASH2", {}, "docling", "qwen3:14b")

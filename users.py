@@ -234,8 +234,20 @@ def get_by_username(username: str) -> Optional[dict]:
 
 
 def get_owner() -> Optional[dict]:
-    row = db.query("SELECT * FROM users WHERE role = %s LIMIT 1", (ROLE_OWNER,), "one")
+    """Первый суперадмин (по сортировке) — «корень» хранилища и первичная учётка.
+    Суперадминов может быть несколько (все равноправны); этот — стабильный «главный»
+    для пути хранилища documents/<owner>/<admin>/."""
+    row = db.query("SELECT * FROM users WHERE role = %s ORDER BY created_at, id LIMIT 1",
+                   (ROLE_OWNER,), "one")
     return _row_to_user(row) if row else None
+
+
+def count_owners(active_only: bool = False) -> int:
+    """Сколько суперадминов (опц. только активных). Нужно, чтобы не снести последнего."""
+    q = "SELECT COUNT(*) AS n FROM users WHERE role = %s"
+    if active_only:
+        q += " AND active = TRUE"
+    return db.query(q, (ROLE_OWNER,), "one")["n"]
 
 
 def count_users() -> int:
@@ -448,8 +460,8 @@ def set_active(user_id: str, active: bool) -> Optional[dict]:
         user = get_user(user_id)
         if not user:
             return None
-        if user["role"] == ROLE_OWNER and not active:
-            raise ValueError("Нельзя деактивировать главного администратора")
+        if user["role"] == ROLE_OWNER and not active and count_owners(active_only=True) <= 1:
+            raise ValueError("Это последний активный суперадмин — нельзя деактивировать")
         user["active"] = bool(active)
         user["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         _save_user(user)
@@ -457,17 +469,22 @@ def set_active(user_id: str, active: bool) -> Optional[dict]:
 
 
 def set_role(user_id: str, role: str) -> dict:
-    """Назначение и снятие прав администратора. Роль owner так не выдаётся."""
-    if role not in (ROLE_ADMIN, ROLE_EMPLOYEE):
-        raise ValueError("Роль может быть только «администратор» или «сотрудник»")
+    """
+    Назначение любой роли: сотрудник / администратор / суперадмин (owner).
+    Суперадминов может быть НЕСКОЛЬКО — назначаем ролью owner напрямую. При снятии
+    роли с суперадмина не даём убрать последнего (иначе систему некому администрировать).
+    Роль с правами (admin/owner) требует заданного пароля.
+    """
+    if role not in ROLES:
+        raise ValueError("Недопустимая роль")
     with _lock:
         user = get_user(user_id)
         if not user:
             raise ValueError("Пользователь не найден")
-        if user["role"] == ROLE_OWNER:
-            raise ValueError("Сначала передайте права главного администратора другому человеку")
-        if role == ROLE_ADMIN and not user.get("hash"):
+        if role in ADMIN_ROLES and not user.get("hash"):
             raise ValueError("У пользователя нет пароля — сначала выдайте ему логин и пароль")
+        if user["role"] == ROLE_OWNER and role != ROLE_OWNER and count_owners() <= 1:
+            raise ValueError("Это последний суперадмин — сначала назначьте другого суперадмина")
         user["role"] = role
         user["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         _save_user(user)
@@ -505,8 +522,8 @@ def delete_user(user_id: str) -> bool:
         user = get_user(user_id)
         if not user:
             return False
-        if user["role"] == ROLE_OWNER:
-            raise ValueError("Нельзя удалить главного администратора — сначала передайте права")
+        if user["role"] == ROLE_OWNER and count_owners() <= 1:
+            raise ValueError("Это последний суперадмин — сначала назначьте другого")
         db.execute("DELETE FROM users WHERE id = %s", (user_id,))
     return True
 

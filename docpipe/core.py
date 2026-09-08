@@ -355,6 +355,25 @@ def split_labeled_chunks(text: str, raw_chunks: list, structure: dict,
     return out
 
 
+def fill_undecided_chunks(chunk_labels: list, section: dict) -> None:
+    """
+    Страховка от пропусков (мутирует chunk_labels на месте). Чанк, у которого модель НЕ
+    проставила ни одного подэтапа и НЕ пометила его общим (is_general=False) — это «не
+    решила»: типично для строк таблиц, продолжений перечней, формул. Такой чанк наследует
+    подэтапы СЕКЦИИ (тему соседних чанков), чтобы информация не выпадала из подэтапа.
+    Чанки, явно помеченные общими, НЕ трогаем — они и должны идти в общую базу.
+    """
+    sec_subs = section.get("substages") or []
+    if not sec_subs:
+        return                                   # у секции нет темы — наследовать нечего
+    sec_stages = list(section.get("stages") or [])
+    for ch in chunk_labels or []:
+        if not (ch.get("substages") or []) and not ch.get("is_general"):
+            ch["substages"] = [dict(s) for s in sec_subs]
+            ch["stages"] = list(sec_stages)
+            ch["source"] = "inherited"           # пометка: подэтап унаследован, не от модели
+
+
 def section_from_chunks(chunk_labels: list, structure: dict, base: dict) -> dict:
     """Метка СЕКЦИИ = объединение меток её чанков (для доски и section_labels):
     подэтап секции = максимальная уверенность среди чанков; is_general — если ни один чанк

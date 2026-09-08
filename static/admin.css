@@ -172,7 +172,10 @@
         .sub-docs { display:flex; flex-wrap:wrap; gap:8px; }
         .bdoc { display:flex; gap:8px; align-items:flex-start; background:#f8fafc; border:1px solid #e2e8f0; border-radius:9px; padding:7px 10px; min-width:190px; max-width:260px; }
         .bdoc .ext { width:26px; height:26px; flex:none; border-radius:6px; display:grid; place-items:center; color:#fff; font-size:9px; font-weight:700; }
-        .bdoc .ext.pdf{background:#d1493f}.bdoc .ext.docx{background:#2f5fe0}.bdoc .ext.xls{background:#1f8a54}.bdoc .ext.ppt{background:#d1712a}.bdoc .ext.gen{background:#64748b}
+        .bdoc .ext.pdf{background:#d1493f}.bdoc .ext.docx{background:#2f5fe0}.bdoc .ext.ppt{background:#d1712a}.bdoc .ext.web{background:#0d9488}.bdoc .ext.md{background:#7c3aed}.bdoc .ext.txt{background:#475569}.bdoc .ext.gen{background:#64748b}
+        /* Формат-бейдж в списке документов (тот же набор цветов, что у карточек доски). */
+        .fmt-tag{display:inline-block;vertical-align:middle;font-size:10px;font-weight:800;letter-spacing:.02em;color:#fff;border-radius:4px;padding:2px 5px;margin-right:6px}
+        .fmt-tag.pdf{background:#d1493f}.fmt-tag.docx{background:#2f5fe0}.fmt-tag.ppt{background:#d1712a}.fmt-tag.web{background:#0d9488}.fmt-tag.md{background:#7c3aed}.fmt-tag.txt{background:#475569}.fmt-tag.gen{background:#64748b}
         .bdoc .nm { font-weight:600; font-size:12px; color:#0f172a; line-height:1.25; word-break:break-word; }
         .bdoc .sc { font-size:11px; color:#64748b; margin-top:3px; }
         .stg.unassigned { border-color:#e6d3a3; }

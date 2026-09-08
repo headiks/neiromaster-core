@@ -93,7 +93,18 @@ def _label_section(sec: dict, repeated: set, card: dict, structure: dict, positi
                 "professions": [], "is_general": False, "prof_conf": None, "why": None}
         return {"section": junk, "chunks": []}
 
-    raw = llm.section_labels(text, sec.get("heading_path") or [], card, structure, positions)
+    # Сбой/таймаут LLM на одной секции НЕ должен ронять весь документ (важно для пакетной
+    # обработки сотен файлов): помечаем секцию как неразмеченную и идём дальше. Текст всё
+    # равно режется на чанки (без меток) — попадёт в общий поиск, не потеряется.
+    try:
+        raw = llm.section_labels(text, sec.get("heading_path") or [], card, structure, positions)
+    except Exception as e:
+        chunks = [{"text": p, "substages": [], "stages": [], "is_general": False}
+                  for p in core.to_chunks(text)] or [{"text": text, "substages": [], "stages": [], "is_general": False}]
+        section = {"is_meaningful": True, "reject_reason": f"llm_error: {type(e).__name__}",
+                   "substages": [], "stages": [], "professions": [], "is_general": False,
+                   "prof_conf": None, "why": None}
+        return {"section": section, "chunks": chunks}
     chunk_labels = core.split_labeled_chunks(text, raw.get("chunks"), structure,
                                              max_tokens=CHUNK_MAX_TOKENS)
     matched, prof_conf = professions.match_to_staffing(
@@ -103,6 +114,10 @@ def _label_section(sec: dict, repeated: set, card: dict, structure: dict, positi
         "professions": matched, "prof_conf": prof_conf, "why": raw.get("why"),
         "reject_reason": None,
     })
+    # Страховка от пропусков: чанк, который модель оставила БЕЗ подэтапа и НЕ пометила
+    # общим (т.е. «не решила» — типично для строк таблиц, продолжений перечней, формул),
+    # наследует подэтапы секции. Явно общие чанки (is_general) НЕ трогаем.
+    core.fill_undecided_chunks(chunk_labels, section)
     return {"section": section, "chunks": chunk_labels}
 
 

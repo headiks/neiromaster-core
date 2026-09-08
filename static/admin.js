@@ -43,7 +43,7 @@
         api('/api/me').then(r => r.json()).then(me => {
             currentUser = me;
             isOwner = me.role === 'owner';
-            const roleTitle = isOwner ? 'главный администратор' : 'администратор';
+            const roleTitle = isOwner ? 'суперадмин' : 'администратор';
             document.getElementById('whoami').innerHTML = `<i data-lucide="user"></i> ${escapeHtml(me.full_name || me.username)} · ${roleTitle}`;
             if (employeesCache.length) renderEmployees(employeesCache);
             if (docsCache.length) renderDocuments(docsCache);   // группировка по владельцу — только суперадмину
@@ -211,8 +211,9 @@
                 .then(d => { allFolders = d.folders || []; renderFolders(); loadStageBoard(); }).catch(() => {});
         }
 
-        const BEXT = { pdf:'pdf', docx:'docx', doc:'docx', xls:'xls', xlsx:'xls', ppt:'ppt', pptx:'ppt' };
-        const BLABEL = { pdf:'PDF', docx:'DOCX', doc:'DOCX', xls:'XLSX', xlsx:'XLSX', ppt:'PPTX', pptx:'PPTX' };
+        // Форматы соответствуют config.SUPPORTED_EXT. Ключ — расширение файла (оно же mime в реестре).
+        const BEXT = { pdf:'pdf', docx:'docx', doc:'docx', pptx:'ppt', html:'web', htm:'web', md:'md', txt:'txt' };
+        const BLABEL = { pdf:'PDF', docx:'DOCX', doc:'DOC', pptx:'PPTX', html:'HTML', htm:'HTM', md:'MD', txt:'TXT' };
         function bDocCard(d) {
             const ext = BEXT[(d.mime || '').toLowerCase()] || 'gen';
             const lab = BLABEL[(d.mime || '').toLowerCase()] || ((d.mime || '').toUpperCase().slice(0, 4) || 'ФАЙЛ');
@@ -410,7 +411,13 @@
             refreshIcons();
         }
 
+        function docFormat(doc) {
+            // Формат — из mime (реестр метаданных) или, если его нет, из расширения имени файла.
+            const raw = (doc.mime || (doc.filename || '').split('.').pop() || '').toLowerCase();
+            return { cls: BEXT[raw] || 'gen', label: BLABEL[raw] || (raw ? raw.toUpperCase().slice(0, 4) : 'ФАЙЛ') };
+        }
         function docCard(doc) {
+                const fmt = docFormat(doc);
                 const meta = [
                     doc.size_bytes !== undefined ? formatSize(doc.size_bytes) : null,
                     doc.chunks ? `${doc.chunks} чанков` : null,
@@ -436,7 +443,7 @@
                     <div class="doc-item" style="flex-direction:column;align-items:stretch;">
                       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
                         <div class="doc-info">
-                            <div class="doc-name" title="${escapeHtml(doc.filename)}"><i data-lucide="file-text"></i> ${escapeHtml(doc.filename)}</div>
+                            <div class="doc-name" title="${escapeHtml(doc.filename)}"><span class="fmt-tag ${fmt.cls}">${fmt.label}</span> ${escapeHtml(doc.filename)}</div>
                             ${folderLine}
                             ${summaryLine}
                             <div class="doc-meta">${meta}</div>
@@ -1298,7 +1305,7 @@
             planned: 'Запланирован', active: 'Проходит адаптацию',
             paused: 'Приостановлен', done: 'Завершил',
         };
-        const ROLE_TITLES = { owner: 'Главный админ', admin: 'Администратор', employee: 'Сотрудник' };
+        const ROLE_TITLES = { owner: 'Суперадмин', admin: 'Администратор', employee: 'Сотрудник' };
 
         function ensureEmployeesLoaded() {
             if (employeesLoaded) return;
@@ -1420,13 +1427,17 @@
                 }
             }
 
-            // Раздача прав и удаление — только у главного администратора
-            if (isOwner && !isSelf && user.role !== 'owner') {
-                buttons.push(user.role === 'admin'
-                    ? `<button class="icon-btn" onclick="setUserRole('${id}', 'employee')"><i data-lucide="arrow-down"></i> Убрать из администраторов</button>`
-                    : `<button class="icon-btn" onclick="setUserRole('${id}', 'admin')"><i data-lucide="arrow-up"></i> Назначить администратором</button>`);
-                if (user.role === 'admin') {
-                    buttons.push(`<button class="icon-btn" onclick="transferOwnership('${id}')"><i data-lucide="crown"></i> Сделать главным</button>`);
+            // Раздача прав и удаление — только у суперадмина. Суперадминов может быть
+            // несколько: администратора можно повысить сразу до суперадмина, а другого
+            // суперадмина — понизить (последнего сервер снять не даст).
+            if (isOwner && !isSelf) {
+                if (user.role === 'owner') {
+                    buttons.push(`<button class="icon-btn" onclick="setUserRole('${id}', 'admin')"><i data-lucide="arrow-down"></i> Убрать из суперадминов</button>`);
+                } else if (user.role === 'admin') {
+                    buttons.push(`<button class="icon-btn" onclick="setUserRole('${id}', 'employee')"><i data-lucide="arrow-down"></i> Убрать из администраторов</button>`);
+                    buttons.push(`<button class="icon-btn" onclick="setUserRole('${id}', 'owner')"><i data-lucide="crown"></i> Сделать суперадмином</button>`);
+                } else {
+                    buttons.push(`<button class="icon-btn" onclick="setUserRole('${id}', 'admin')"><i data-lucide="arrow-up"></i> Назначить администратором</button>`);
                 }
                 buttons.push(`<button class="icon-btn danger" onclick="deleteEmployee('${id}')"><i data-lucide="x"></i> Удалить</button>`);
             }
@@ -1565,10 +1576,14 @@
 
         function setUserRole(id, role) {
             const employee = employeesCache.find(e => e.id === id);
-            const question = role === 'admin'
-                ? `Назначить «${employee.full_name}» администратором? Он получит доступ к базе знаний, конструктору планов и заведению сотрудников.`
-                : `Убрать «${employee.full_name}» из администраторов?`;
-            if (!confirm(question)) return;
+            const questions = {
+                owner: `Сделать «${employee.full_name}» суперадмином? Он получит полный доступ: все документы всех администраторов и все сотрудники, раздача прав, удаление.`,
+                admin: employee.role === 'owner'
+                    ? `Убрать «${employee.full_name}» из суперадминов? Останется обычным администратором (только свой отдел и свои документы).`
+                    : `Назначить «${employee.full_name}» администратором? Он получит доступ к базе знаний, конструктору планов и заведению сотрудников.`,
+                employee: `Убрать «${employee.full_name}» из администраторов?`,
+            };
+            if (!confirm(questions[role] || 'Сменить роль?')) return;
             apiJson(`/users/${encodeURIComponent(id)}/role`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
