@@ -18,12 +18,15 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 import db
+import auth
 import users
 import folders
 import stages
 import classify
 import indexing
 import documents
+import messaging
+import activitylog
 from deps import BASE_DIR, STATIC_DIR
 
 import api_pages
@@ -33,9 +36,10 @@ import api_documents
 import api_knowledge
 import api_plans
 import api_people
+import api_activity
 
 ROUTERS = (api_pages, api_accounts, api_chat, api_documents,
-           api_knowledge, api_plans, api_people)
+           api_knowledge, api_plans, api_people, api_activity)
 
 
 @asynccontextmanager
@@ -97,6 +101,10 @@ async def lifespan(app: FastAPI):
         documents.init()
     except Exception as e:
         print(f"Предупреждение: реестр документов не инициализирован: {e}")
+
+    # Фоновый планировщик доставки сообщений плана по расписанию (инбокс сотрудника).
+    # Отключается NEIROMASTER_SCHEDULER=0 (напр. когда доставку гоняют внешним cron).
+    messaging.start_scheduler()
     yield
 
 
@@ -105,6 +113,24 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RAG Assistant API", lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@app.middleware("http")
+async def log_page_views(request, call_next):
+    """Просмотры страниц — централизованно: GET-запрос, отдавший HTML (не /static, не /api).
+    Так не нужно дублировать логирование в каждом обработчике страницы."""
+    response = await call_next(request)
+    try:
+        path = request.url.path
+        if (request.method == "GET" and response.status_code == 200
+                and not path.startswith("/static") and not path.startswith("/api")
+                and "text/html" in response.headers.get("content-type", "")):
+            user = auth.get_session_user(request.cookies.get(auth.COOKIE_NAME))
+            activitylog.log("page_view", user=user, request=request, path=path)
+    except Exception:
+        pass
+    return response
+
 
 for _module in ROUTERS:
     app.include_router(_module.router)

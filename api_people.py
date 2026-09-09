@@ -11,6 +11,7 @@ import users
 import staffing
 import planner
 import employees as adaptation
+import messaging
 from config import MAX_UPLOAD_BYTES
 from deps import require_admin, require_owner, admin_only, owner_only
 
@@ -239,6 +240,16 @@ async def get_user_schedule(user_id: str, actor: dict = Depends(require_admin)):
         return adaptation.build_employee_schedule(user)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/users/{user_id}/schedule/materialize")
+async def materialize_user_schedule(user_id: str, actor: dict = Depends(require_admin)):
+    """Пересобрать расписание-инстансы сотрудника для доставки по времени (инбокс).
+    Планировщик и сам досоздаёт недостающее, но после смены плана/даты выхода это
+    сразу обновляет будущие (ещё не доставленные) сообщения."""
+    user = _target_user(user_id, actor)
+    count = messaging.materialize_employee(user, force=True)
+    return {"materialized": count}
 
 
 EMPLOYEE_EXPORTS = {"schedule.json", "schedule.md"}

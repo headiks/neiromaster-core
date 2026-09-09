@@ -155,6 +155,51 @@ SCHEMA_STATEMENTS = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_substages_stage ON substages(stage_id, position)",
+    # Материализованные сообщения расписания = инбокс сотрудника + статус доставки.
+    # Считать расписание на лету дёшево, но чтобы доставлять по времени и не слать
+    # дважды, нужна персистентная строка на сообщение. id = <employee_id>:<message_id>
+    # (идемпотентно при повторной материализации). send_at — абсолютный момент (UTC),
+    # локализованный из времени плана. status: pending|delivered|read|failed|canceled.
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_messages (
+        id           TEXT PRIMARY KEY,
+        employee_id  TEXT        NOT NULL,
+        plan_id      TEXT,
+        message_id   TEXT        NOT NULL,
+        stage_id     TEXT,
+        substage_id  TEXT,
+        title        TEXT        NOT NULL DEFAULT '',
+        body         TEXT        NOT NULL DEFAULT '',
+        send_at      TIMESTAMPTZ NOT NULL,
+        status       TEXT        NOT NULL DEFAULT 'pending',
+        delivered_at TIMESTAMPTZ,
+        read_at      TIMESTAMPTZ,
+        error        TEXT,
+        created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sched_due ON scheduled_messages(status, send_at)",
+    "CREATE INDEX IF NOT EXISTS idx_sched_emp ON scheduled_messages(employee_id, send_at)",
+    # Журнал действий пользователей: вход/выход, просмотры страниц, клики, ключевые
+    # действия. detail — произвольные подробности события (id элемента, имя файла и т.п.).
+    """
+    CREATE TABLE IF NOT EXISTS activity_log (
+        id         BIGSERIAL PRIMARY KEY,
+        ts         TIMESTAMPTZ NOT NULL DEFAULT now(),
+        user_id    TEXT,
+        username   TEXT,
+        role       TEXT,
+        event_type TEXT        NOT NULL,
+        path       TEXT,
+        detail     JSONB       NOT NULL DEFAULT '{}',
+        ip         TEXT,
+        user_agent TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_activity_ts   ON activity_log(ts DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id, ts DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_log(event_type, ts DESC)",
 )
 
 
