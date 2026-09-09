@@ -22,6 +22,7 @@
     <div class="tabs">
         <button class="tab active" data-tab="staffing"><i data-lucide="table"></i> Штатное расписание</button>
         <button class="tab" data-tab="builder"><i data-lucide="calendar-cog"></i> Планы</button>
+        <button class="tab" data-tab="plantexts"><i data-lucide="file-text"></i> Тексты плана</button>
         <button class="tab" data-tab="docs"><i data-lucide="database"></i> Папки</button>
         <button class="tab" data-tab="questions"><i data-lucide="help-circle"></i> Вопросы <span id="questions-badge" class="q-badge" style="display:none;"></span></button>
         <button class="tab" data-tab="employees"><i data-lucide="users"></i> Аккаунты</button>
@@ -44,6 +45,18 @@
         <div id="staffing-status" class="muted" style="margin-top:10px;color:#64748b;font-size:14px;"></div>
         <div id="staffing-preview"></div>
         <div id="staffing-result"></div>
+    </div>
+
+    <div class="tab-pane" id="pane-plantexts">
+        <h2 class="section-title"><i data-lucide="file-text"></i> Тексты плана адаптации</h2>
+        <p class="hint">Сгенерированные сообщения плана по этапам и подэтапам — то, что получит сотрудник. Выберите план и, при необходимости, должность.</p>
+        <div class="row" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0;">
+            <select id="pt-plan" onchange="loadPlanTexts()" style="min-width:280px;"></select>
+            <select id="pt-prof" onchange="renderPlanTexts()" style="min-width:200px;"></select>
+            <button class="ghost-btn" onclick="refreshPlanTexts()"><i data-lucide="refresh-cw"></i> Обновить</button>
+            <span id="pt-meta" class="hint" style="margin-left:auto;"></span>
+        </div>
+        <div id="pt-body"></div>
     </div>
 
     <div class="tab-pane" id="pane-docs">

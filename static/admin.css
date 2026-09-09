@@ -176,6 +176,16 @@
         /* Формат-бейдж в списке документов (тот же набор цветов, что у карточек доски). */
         .fmt-tag{display:inline-block;vertical-align:middle;font-size:10px;font-weight:800;letter-spacing:.02em;color:#fff;border-radius:4px;padding:2px 5px;margin-right:6px}
         .fmt-tag.pdf{background:#d1493f}.fmt-tag.docx{background:#2f5fe0}.fmt-tag.ppt{background:#d1712a}.fmt-tag.web{background:#0d9488}.fmt-tag.md{background:#7c3aed}.fmt-tag.txt{background:#475569}.fmt-tag.gen{background:#64748b}
+        /* Вкладка «Тексты плана адаптации» */
+        .hint{color:#64748b;font-size:13px}
+        .pt-stage{margin:16px 0}
+        .pt-stage-h{font-size:16px;margin:0 0 8px;padding-bottom:6px;border-bottom:2px solid #3b82f6;color:#1e293b}
+        .pt-sub{background:#fff;border:1px solid #e2e8f0;border-left:4px solid #3b82f6;border-radius:8px;padding:10px 14px;margin:8px 0}
+        .pt-sub-h{font-size:14px;color:#1e293b;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+        .pt-kind{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#475569;background:#eef2f7;border-radius:5px;padding:2px 6px}
+        .pt-status{font-size:11px;font-weight:700;color:#9a6a10;background:#f7eed9;border-radius:5px;padding:2px 6px}
+        .pt-text{white-space:pre-wrap;font-size:14px;line-height:1.55;color:#334155}
+        .pt-src{margin-top:6px;font-size:12px;color:#8b94a3}
         .bdoc .nm { font-weight:600; font-size:12px; color:#0f172a; line-height:1.25; word-break:break-word; }
         .bdoc .sc { font-size:11px; color:#64748b; margin-top:3px; }
         .stg.unassigned { border-color:#e6d3a3; }

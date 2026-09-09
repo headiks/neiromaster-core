@@ -31,6 +31,7 @@
                 tab.classList.add('active');
                 document.getElementById(`pane-${tab.dataset.tab}`).classList.add('active');
                 if (tab.dataset.tab === 'builder') ensureBuilderLoaded();
+                if (tab.dataset.tab === 'plantexts') ensurePlanTextsLoaded();
                 if (tab.dataset.tab === 'employees') ensureEmployeesLoaded();
                 if (tab.dataset.tab === 'questions') loadQuestions();
                 if (tab.dataset.tab === 'docs') loadStageBoard();
@@ -248,6 +249,79 @@
             el.innerHTML = html || '<div class="empty-hint">Пока нет ни этапов, ни документов.</div>';
             refreshIcons();
         }
+        // ---------------- Тексты плана адаптации ----------------
+        let _planTextsLoaded = false;
+        function ensurePlanTextsLoaded() {
+            if (_planTextsLoaded) return;
+            api('/plans').then(r => r.json()).then(d => {
+                const sel = document.getElementById('pt-plan');
+                const plans = d.plans || [];
+                sel.innerHTML = plans.length
+                    ? plans.map(p => `<option value="${escapeHtml(p.plan_id)}">${escapeHtml(p.title)}${p.role ? ' · ' + escapeHtml(p.role) : ''}</option>`).join('')
+                    : '<option value="">— планов нет —</option>';
+                _planTextsLoaded = true;               // фиксируем только после успешной загрузки
+                if (plans.length) loadPlanTexts();
+            }).catch(() => {
+                // транзиентный сбой — не запираем вкладку, дадим повторить при следующем открытии
+                document.getElementById('pt-body').innerHTML =
+                    '<div class="empty-hint">Не удалось загрузить список планов. Нажмите «Обновить».</div>';
+            });
+        }
+        function refreshPlanTexts() { _planTextsLoaded = false; ensurePlanTextsLoaded(); }
+        function loadPlanTexts() {
+            const pid = document.getElementById('pt-plan').value;
+            if (!pid) { document.getElementById('pt-body').innerHTML = '<div class="empty-hint">Выберите план.</div>'; return; }
+            // список должностей, под которые есть отдельные тексты (+ «общий»)
+            api(`/plans/${encodeURIComponent(pid)}/professions`).then(r => r.ok ? r.json() : { professions: [] })
+                .then(d => {
+                    const profs = d.professions || [];
+                    document.getElementById('pt-prof').innerHTML =
+                        '<option value="">Общий текст</option>' +
+                        profs.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+                }).finally(renderPlanTexts);
+        }
+        function renderPlanTexts() {
+            const pid = document.getElementById('pt-plan').value;
+            const prof = document.getElementById('pt-prof').value || '';
+            const body = document.getElementById('pt-body');
+            const meta = document.getElementById('pt-meta');
+            if (!pid) return;
+            body.innerHTML = '<div class="empty-hint">Загрузка…</div>';
+            api(`/plans/${encodeURIComponent(pid)}/schedule${prof ? '?profession=' + encodeURIComponent(prof) : ''}`)
+                .then(r => r.status === 404 ? null : r.json())
+                .then(sch => {
+                    if (!sch) { meta.textContent = ''; body.innerHTML = '<div class="empty-hint">Тексты ещё не сгенерированы. Сгенерируйте план во вкладке «Планы».</div>'; return; }
+                    const msgs = sch.messages || [];
+                    meta.textContent = `сообщений: ${msgs.length}${sch.generated_at ? ' · ' + sch.generated_at.replace('T', ' ') : ''}`;
+                    // группировка по этапам -> подэтапам (порядок как в расписании)
+                    const stages = [];
+                    const byStage = {};
+                    msgs.forEach(m => {
+                        const sid = (m.stage || {}).id;
+                        if (!byStage[sid]) { byStage[sid] = { title: (m.stage || {}).title, order: (m.stage || {}).order || 0, subs: [] }; stages.push(sid); }
+                        byStage[sid].subs.push(m);
+                    });
+                    stages.sort((a, b) => byStage[a].order - byStage[b].order);
+                    body.innerHTML = stages.map((sid, i) => {
+                        const st = byStage[sid];
+                        const subs = st.subs.map(m => {
+                            const txt = ((m.content || {}).text || '').trim();
+                            const kind = (m.substage || {}).kind || '';
+                            const st2 = m.status && m.status !== 'generated' ? ` <span class="pt-status">${escapeHtml(m.status)}</span>` : '';
+                            const src = (m.sources || []).length ? `<div class="pt-src">Источники: ${m.sources.map(s => escapeHtml(typeof s === 'string' ? s : (s.filename || s.title || ''))).filter(Boolean).join(', ')}</div>` : '';
+                            return `<div class="pt-sub">
+                                <div class="pt-sub-h"><b>${escapeHtml((m.substage || {}).title || '')}</b>${kind ? ` <span class="pt-kind">${escapeHtml(kind)}</span>` : ''}${st2}</div>
+                                <div class="pt-text">${txt ? escapeHtml(txt) : '<span class="empty-hint">— текст пуст —</span>'}</div>
+                                ${src}
+                            </div>`;
+                        }).join('');
+                        return `<section class="pt-stage"><h3 class="pt-stage-h">${i + 1}. ${escapeHtml(st.title || '')}</h3>${subs}</section>`;
+                    }).join('') || '<div class="empty-hint">В расписании нет сообщений.</div>';
+                    refreshIcons();
+                })
+                .catch(() => { body.innerHTML = '<div class="empty-hint">Не удалось загрузить тексты.</div>'; });
+        }
+
         function loadStageBoard() {
             const el = document.getElementById('stage-board');
             if (!el) return;
