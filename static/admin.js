@@ -215,10 +215,11 @@
         const BEXT = { pdf:'pdf', docx:'docx', doc:'docx', pptx:'ppt', html:'web', htm:'web', md:'md', txt:'txt' };
         const BLABEL = { pdf:'PDF', docx:'DOCX', doc:'DOC', pptx:'PPTX', html:'HTML', htm:'HTM', md:'MD', txt:'TXT' };
         function bDocCard(d) {
-            const ext = BEXT[(d.mime || '').toLowerCase()] || 'gen';
-            const lab = BLABEL[(d.mime || '').toLowerCase()] || ((d.mime || '').toUpperCase().slice(0, 4) || 'ФАЙЛ');
+            // Тип — из mime ИЛИ из расширения имени файла (в реестре mime может быть пустым,
+            // тогда раньше показывалось «ФАЙЛ»). docFormat даёт и то, и другое.
+            const fmt = docFormat(d);
             const sc = (d.score != null) ? `<div class="sc">уверенность ${Number(d.score).toFixed(2)}</div>` : '';
-            return `<div class="bdoc" data-fn="${escapeHtml(d.filename || '')}" onclick="openSubstageMap(this.dataset.fn)" title="Показать куски текста и критерий попадания"><div class="ext ${ext}">${lab}</div><div><div class="nm">${escapeHtml(d.filename || '')}</div>${sc}</div></div>`;
+            return `<div class="bdoc" data-fn="${escapeHtml(d.filename || '')}" onclick="openSubstageMap(this.dataset.fn)" title="Показать куски текста и критерий попадания"><div class="ext ${fmt.cls}">${fmt.label}</div><div><div class="nm">${escapeHtml(d.filename || '')}</div>${sc}</div></div>`;
         }
         function bCountDocs(s) { let n = (s.documents || []).length; (s.substages || []).forEach(x => n += (x.documents || []).length); return n; }
         function renderStageBoard(b) {

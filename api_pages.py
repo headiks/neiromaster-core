@@ -72,6 +72,12 @@ async def documents_table_page(request: Request):
     return page_for_admin(request, "documents_table.html")
 
 
+@router.get("/logs", response_class=HTMLResponse)
+async def logs_page(request: Request):
+    """Журнал действий по пользователям (суперадмин — все, администратор — свой отдел)."""
+    return page_for_admin(request, "logs.html")
+
+
 @router.get("/doc-breakdown", response_class=HTMLResponse)
 async def doc_breakdown_page(request: Request):
     """Страница просмотра разбора документа (блоки → чанки, метки, обоснования)."""

@@ -54,13 +54,17 @@ def clean_client_detail(detail) -> dict:
     return detail
 
 
-def recent(limit=200, event_type=None, user_id=None):
-    """Последние события для админского экрана. Фильтры опциональны."""
+def recent(limit=200, event_type=None, user_id=None, user_ids=None):
+    """Последние события для админского экрана. Фильтры опциональны.
+    user_ids — ограничить набором пользователей (разграничение по отделу): [] -> ничего,
+    None -> без ограничения. user_id (один) имеет приоритет над user_ids."""
     where, params = [], []
     if event_type:
         where.append("event_type = %s"); params.append(event_type)
     if user_id:
         where.append("user_id = %s"); params.append(user_id)
+    elif user_ids is not None:
+        where.append("user_id = ANY(%s)"); params.append(list(user_ids))
     clause = ("WHERE " + " AND ".join(where)) if where else ""
     params.append(max(1, min(int(limit), 1000)))
     return db.query(

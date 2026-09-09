@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Журнал действий — НейроМастер</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#eef1f6;--surface:#fff;--surface-2:#f6f8fb;--ink:#15202e;--muted:#586475;--faint:#8b94a3;
+  --line:#e3e7ef;--line-2:#d2d9e4;--accent:#2f5fe0;--accent-soft:#e9f0fe;--accent-ink:#1e46bd;
+  --ok:#16794a;--ok-soft:#e2f2ea;--warn:#9a6a10;--warn-soft:#f7eed9;--err:#c0392b;--err-soft:#f8e6e3;
+  --shadow-sm:0 1px 2px rgba(21,32,46,.05);--shadow:0 8px 30px rgba(21,32,46,.12);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0c1119;--surface:#151d29;--surface-2:#111825;--ink:#e7ecf4;--muted:#9aa5b4;--faint:#697484;
+  --line:#232f40;--line-2:#2f3d52;--accent:#6f97f5;--accent-soft:#182640;--accent-ink:#9db8fa;
+  --ok:#57c489;--ok-soft:#123023;--warn:#d6a955;--warn-soft:#2c2410;--err:#e5675d;--err-soft:#331d1a;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);--shadow:0 16px 44px rgba(0,0,0,.55);
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.5}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+.shell{max-width:1320px;margin:0 auto;padding:26px 20px 80px}
+.top{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:flex-end;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:11px}
+.logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#7c3aed);display:grid;place-items:center;color:#fff;font-size:18px}
+h1{font-size:1.28rem;font-weight:800;margin:0}
+.sub{color:var(--muted);font-size:.84rem;margin:1px 0 0}
+.actions{display:flex;gap:8px}
+.btn{border:1px solid var(--line-2);background:var(--surface);border-radius:9px;padding:8px 13px;font:inherit;font-size:.82rem;font-weight:600;color:var(--muted);cursor:pointer;text-decoration:none}
+.btn:hover{color:var(--ink)}
+.layout{display:grid;grid-template-columns:280px 1fr;gap:16px;margin-top:18px}
+@media(max-width:820px){.layout{grid-template-columns:1fr}}
+.panel{border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
+.panel h2{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0;padding:13px 15px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+/* список пользователей */
+.users{max-height:70vh;overflow:auto}
+.u{display:block;width:100%;text-align:left;border:0;background:none;border-bottom:1px solid var(--line);padding:10px 15px;cursor:pointer;font:inherit;color:var(--ink)}
+.u:hover{background:var(--surface-2)}
+.u.on{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.u .n{font-weight:600}
+.u .m{font-size:.76rem;color:var(--faint)}
+.u .role{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+/* фильтры + таблица */
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:12px 15px;border-bottom:1px solid var(--line)}
+.chip{border:1px solid var(--line-2);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:.78rem;font-weight:600;color:var(--muted);cursor:pointer}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.count{color:var(--muted);font-size:.82rem;margin-left:auto}
+.wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:820px;font-size:.83rem}
+th,td{text-align:left;padding:10px 13px;border-top:1px solid var(--line);vertical-align:top}
+thead th{position:sticky;top:0;background:var(--surface-2);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;border-top:0}
+tbody tr:hover{background:var(--surface-2)}
+td.ts{white-space:nowrap;color:var(--muted);font-size:.78rem}
+.ev{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;padding:.16em .5em;border-radius:6px}
+.ev.login{background:var(--ok-soft);color:var(--ok)}
+.ev.logout{background:var(--surface-2);color:var(--muted)}
+.ev.login_failed{background:var(--err-soft);color:var(--err)}
+.ev.page_view{background:var(--accent-soft);color:var(--accent-ink)}
+.ev.click{background:var(--warn-soft);color:var(--warn)}
+.ev.action{background:#efe6fb;color:#6b3fb0}
+.path{max-width:280px;overflow-wrap:anywhere;color:var(--muted)}
+.detail{max-width:280px;overflow-wrap:anywhere;color:var(--faint);font-size:.76rem}
+.dash{color:var(--faint)}
+.msg{padding:44px 0;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand">
+      <div class="logo">◧</div>
+      <div>
+        <h1>Журнал действий</h1>
+        <div class="sub" id="scope-note">Кто что делал в системе</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="load()">Обновить</button>
+      <a class="btn" href="/admin">← Админка</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Пользователи</h2>
+      <div class="users" id="users"></div>
+    </div>
+    <div class="panel">
+      <div class="bar" id="filters"></div>
+      <div class="wrap"><table>
+        <thead><tr><th>Время</th><th>Пользователь</th><th>Событие</th><th>Страница / действие</th><th>Детали</th><th>IP</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const EVENTS = { '': 'Все', login: 'Вход', logout: 'Выход', login_failed: 'Неудачный вход',
+                 page_view: 'Просмотр', click: 'Клик', action: 'Действие' };
+let state = { user_id: '', event_type: '' };
+let USERS = [];
+
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+function api(u){return fetch(u).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
+function fmtTs(s){ if(!s) return '—'; const d=new Date(s); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+function roleTitle(r){ return {owner:'Суперадмин',admin:'Администратор',employee:'Сотрудник'}[r]||r||''; }
+
+function renderFilters(){
+  document.getElementById('filters').innerHTML =
+    Object.entries(EVENTS).map(([k,label])=>
+      `<button class="chip ${state.event_type===k?'on':''}" onclick="setType('${k}')">${esc(label)}</button>`).join('')
+    + `<span class="count" id="count"></span>`;
+}
+function setType(t){ state.event_type=t; renderFilters(); load(); }
+
+function renderUsers(){
+  const box=document.getElementById('users');
+  const all=`<button class="u ${state.user_id===''?'on':''}" onclick="pickUser('')"><div class="n">Все пользователи</div><div class="m">события всех, кого вы видите</div></button>`;
+  box.innerHTML = all + USERS.map(u=>`
+    <button class="u ${state.user_id===u.id?'on':''}" onclick="pickUser('${esc(u.id)}')">
+      <div class="n">${esc(u.full_name||u.username||'—')}</div>
+      <div class="m">${esc(u.username?('@'+u.username):'без логина')}${u.department?(' · '+esc(u.department)):''}</div>
+      <div class="role">${esc(roleTitle(u.role))}</div>
+    </button>`).join('');
+}
+function pickUser(id){ state.user_id=id; renderUsers(); load(); }
+
+function load(){
+  renderFilters();
+  const q=new URLSearchParams();
+  if(state.user_id) q.set('user_id', state.user_id);
+  if(state.event_type) q.set('event_type', state.event_type);
+  q.set('limit','500');
+  const rows=document.getElementById('rows');
+  rows.innerHTML=`<tr><td colspan="6" class="msg">Загрузка…</td></tr>`;
+  api('/api/activity?'+q.toString()).then(r=>r.json()).then(d=>{
+    const ev=d.events||[];
+    const c=document.getElementById('count'); if(c) c.textContent=ev.length+' событий';
+    if(!ev.length){ rows.innerHTML=`<tr><td colspan="6" class="msg">Событий нет.</td></tr>`; return; }
+    rows.innerHTML=ev.map(e=>{
+      const det=e.detail&&Object.keys(e.detail).length?JSON.stringify(e.detail,null,0):'';
+      return `<tr>
+        <td class="ts">${fmtTs(e.ts)}</td>
+        <td>${esc(e.username||e.user_id||'—')}${e.role?` <span class="dash">· ${esc(roleTitle(e.role))}</span>`:''}</td>
+        <td><span class="ev ${esc(e.event_type)}">${esc(EVENTS[e.event_type]||e.event_type)}</span></td>
+        <td class="path">${esc(e.path||'—')}</td>
+        <td class="detail">${esc(det||'')||'<span class="dash">—</span>'}</td>
+        <td class="path mono">${esc(e.ip||'—')}</td>
+      </tr>`;
+    }).join('');
+  }).catch(()=>{ rows.innerHTML=`<tr><td colspan="6" class="msg">Не удалось загрузить журнал.</td></tr>`; });
+}
+
+// кто я — подпись про охват (суперадмин видит всех, админ — свой отдел)
+api('/api/me').then(r=>r.json()).then(me=>{
+  document.getElementById('scope-note').textContent = me.role==='owner'
+    ? 'Суперадмин: журнал всех пользователей'
+    : 'Администратор: журнал пользователей вашего отдела';
+}).catch(()=>{});
+
+// список пользователей (сервер уже отдаёт только видимых по отделу)
+api('/users').then(r=>r.json()).then(d=>{ USERS=(d.users||[]); renderUsers(); }).catch(()=>{ renderUsers(); });
+load();
+</script>
+</body>
+</html>

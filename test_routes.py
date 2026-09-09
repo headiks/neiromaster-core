@@ -25,7 +25,7 @@ FRAMEWORK = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
 SELF_GUARDED = {"/", "/setup", "/api/me", "/api/setup-credentials", "/api/password"}
 
 EXPECTED_SAMPLE = [
-    "/", "/login", "/admin", "/s3", "/doc-breakdown", "/documents-board", "/documents-table",
+    "/", "/login", "/admin", "/s3", "/doc-breakdown", "/documents-board", "/documents-table", "/logs",
     "/api/login", "/api/me", "/api/s3/list", "/ask", "/documents", "/documents/upload",
     "/documents/board", "/documents/table", "/documents/labeled", "/documents/{filename}",
     "/folders", "/knowledge/stages", "/questions", "/catalog", "/plans", "/users",
@@ -105,7 +105,7 @@ def test_every_private_route_requires_login():
 def test_admin_pages_are_admin_only():
     import inspect
     for r in routes(load_app()):
-        if r.path in ("/admin", "/s3", "/documents-board", "/documents-table", "/doc-breakdown"):
+        if r.path in ("/admin", "/s3", "/documents-board", "/documents-table", "/doc-breakdown", "/logs"):
             assert "page_for_admin" in inspect.getsource(r.endpoint), \
                 f"страница {r.path} не закрыта page_for_admin"
 
