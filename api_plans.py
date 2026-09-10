@@ -1,8 +1,10 @@
 """Конструктор плана адаптации: планы, генерация сообщений, экспорт, фоновые задачи."""
 
+import json
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 
 import db
 import users
@@ -218,14 +220,25 @@ EXPORT_FILES = {
 
 
 @router.get("/plans/{plan_id}/export/{name}", dependencies=admin_only)
-async def export_plan(plan_id: str, name: str):
+async def export_plan(plan_id: str, name: str, profession: str | None = None):
+    """Экспорт плана/расписания из БД. profession — какое расписание отдать (пустой = общее)."""
     if name not in EXPORT_FILES:
         raise HTTPException(status_code=400, detail=f"Доступны: {', '.join(EXPORT_FILES)}")
-    try:
-        path = planner.plan_dir(plan_id) / name
-    except ValueError:
+    plan = planner.load_plan(plan_id)
+    if plan is None:
         raise HTTPException(status_code=404, detail="План не найден")
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Файл ещё не сформирован")
+
+    if name == "plan.json":
+        content = json.dumps(plan, ensure_ascii=False, indent=2)
+    elif name == "plan.md":
+        content = planner.render_plan_md(plan)
+    else:
+        schedule = planner.load_schedule(plan_id, profession or "")
+        if schedule is None:
+            raise HTTPException(status_code=404, detail="Расписание ещё не сгенерировано")
+        content = (json.dumps(schedule, ensure_ascii=False, indent=2) if name == "schedule.json"
+                   else planner.render_schedule_md(schedule))
+
     media_type, _ = EXPORT_FILES[name]
-    return FileResponse(path, media_type=media_type, filename=f"{plan_id}_{name}")
+    return Response(content=content, media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="{plan_id}_{name}"'})

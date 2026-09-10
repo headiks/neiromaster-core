@@ -22,6 +22,7 @@ import auth
 import users
 import folders
 import stages
+import planner
 import classify
 import indexing
 import documents
@@ -78,6 +79,12 @@ async def lifespan(app: FastAPI):
         print(f"Предупреждение: пайплайн разметки docpipe не инициализирован: {e}")
 
     # Разовые миграции со старых файловых хранилищ в БД
+    try:
+        moved_plans = planner.migrate_plans_from_files()
+        if moved_plans:
+            print(f"Перенесено планов адаптации из файлов в БД: {moved_plans}")
+    except Exception as e:
+        print(f"Предупреждение: миграция планов в БД не выполнена: {e}")
     moved_json = users.migrate_legacy_json_users()
     if moved_json:
         print(f"Перенесено аккаунтов из users.json в БД: {moved_json}")

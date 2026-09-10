@@ -30,6 +30,10 @@ from pathlib import Path
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from psycopg.types.json import Json
+
+import db
+
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CATALOG_PATH = DATA_DIR / "stage_catalog.json"
@@ -330,23 +334,18 @@ def plan_dir(plan_id: str) -> Path:
 
 
 def save_plan(plan: dict) -> dict:
-    directory = plan_dir(plan["plan_id"])
-    directory.mkdir(parents=True, exist_ok=True)
-    with _plans_lock:
-        _write_json(directory / "plan.json", plan)
-        (directory / "plan.md").write_text(render_plan_md(plan), encoding="utf-8")
+    """Сохраняет канонический план в БД (таблица plans, JSONB). Источник истины."""
+    db.execute(
+        "INSERT INTO plans (plan_id, data, updated_at) VALUES (%s, %s, %s) "
+        "ON CONFLICT (plan_id) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
+        (plan["plan_id"], Json(plan), datetime.now().isoformat(timespec="seconds")),
+    )
     return plan
 
 
 def load_plan(plan_id: str) -> Optional[dict]:
-    try:
-        path = plan_dir(plan_id) / "plan.json"
-    except ValueError:
-        return None
-    if not path.exists():
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    row = db.query("SELECT data FROM plans WHERE plan_id = %s", (plan_id,), fetch="one")
+    return row["data"] if row else None
 
 
 def duplicate_plan(plan_id: str, new_title: Optional[str] = None) -> Optional[dict]:
@@ -366,18 +365,14 @@ def duplicate_plan(plan_id: str, new_title: Optional[str] = None) -> Optional[di
 
 
 def list_plans() -> list:
+    rows = db.query(
+        "SELECT p.data AS data, "
+        "EXISTS (SELECT 1 FROM plan_schedules s WHERE s.plan_id = p.plan_id) AS generated "
+        "FROM plans p"
+    )
     plans = []
-    for directory in PLANS_DIR.iterdir():
-        if not directory.is_dir():
-            continue
-        plan_path = directory / "plan.json"
-        if not plan_path.exists():
-            continue
-        try:
-            with open(plan_path, "r", encoding="utf-8") as f:
-                plan = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            continue
+    for r in rows or []:
+        plan = r["data"] or {}
         plans.append({
             "plan_id": plan.get("plan_id"),
             "title": plan.get("title"),
@@ -386,70 +381,78 @@ def list_plans() -> list:
             "stages": len(plan.get("stages") or []),
             "substages": sum(len(s.get("substages") or []) for s in plan.get("stages") or []),
             "updated_at": plan.get("updated_at"),
-            "generated": (directory / "schedule.json").exists(),
+            "generated": r["generated"],
         })
     return sorted(plans, key=lambda p: p.get("updated_at") or "", reverse=True)
 
 
 def delete_plan(plan_id: str) -> bool:
-    try:
-        directory = plan_dir(plan_id)
-    except ValueError:
-        return False
-    if not directory.exists():
-        return False
-    for item in sorted(directory.rglob("*"), reverse=True):
-        item.unlink() if item.is_file() else item.rmdir()
-    directory.rmdir()
-    return True
+    row = db.query("DELETE FROM plans WHERE plan_id = %s RETURNING plan_id", (plan_id,), fetch="one")
+    return row is not None
 
 
 def profession_slug(position: str) -> str:
-    """Короткий стабильный slug должности для имени файла расписания профессии."""
+    """Короткий стабильный slug должности (для UI/экспорта; в БД ключ — сама строка)."""
     return _slug(position, "obshiy")
 
 
-def _schedule_path(plan_id: str, profession: str = ""):
-    """schedule.json — общее расписание; schedules/<slug>.json — под конкретную должность."""
-    directory = plan_dir(plan_id)
-    if (profession or "").strip():
-        return directory / "schedules" / f"{profession_slug(profession)}.json"
-    return directory / "schedule.json"
-
-
 def load_schedule(plan_id: str, profession: str = "") -> Optional[dict]:
-    """Расписание плана. При указанной должности берём расписание её профессии; если его нет —
-    откат на общее (schedule.json). Так план один, а контент — под профессию из аккаунта."""
-    try:
-        path = _schedule_path(plan_id, profession)
-    except ValueError:
-        return None
-    if not path.exists() and profession:
-        try:
-            path = _schedule_path(plan_id, "")   # откат на общее
-        except ValueError:
-            return None
-    if not path.exists():
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Расписание плана из БД. При указанной должности берём её расписание; если его нет —
+    откат на общее (profession=''). Так план один, а контент — под профессию из аккаунта."""
+    prof = (profession or "").strip()
+    row = db.query("SELECT data FROM plan_schedules WHERE plan_id = %s AND profession = %s",
+                   (plan_id, prof), fetch="one")
+    if row is None and prof:
+        row = db.query("SELECT data FROM plan_schedules WHERE plan_id = %s AND profession = ''",
+                       (plan_id,), fetch="one")
+    return row["data"] if row else None
 
 
 def list_schedule_professions(plan_id: str) -> list:
-    """Список профессий, под которые сгенерированы расписания (по файлам schedules/*.json)."""
-    try:
-        directory = plan_dir(plan_id) / "schedules"
-    except ValueError:
-        return []
-    if not directory.exists():
-        return []
-    out = []
-    for f in sorted(directory.glob("*.json")):
+    """Профессии, под которые сгенерированы расписания (кроме общего profession='')."""
+    rows = db.query(
+        "SELECT profession FROM plan_schedules WHERE plan_id = %s AND profession <> '' "
+        "ORDER BY profession", (plan_id,))
+    return [{"slug": profession_slug(r["profession"]), "profession": r["profession"]}
+            for r in (rows or [])]
+
+
+def migrate_plans_from_files() -> int:
+    """Разовый перенос файловых планов (data/plans/<id>/) в БД. Идемпотентно: план,
+    уже присутствующий в БД, пропускаем (чтобы правки из БД не затирались файлами)."""
+    if not PLANS_DIR.exists():
+        return 0
+    moved = 0
+    for directory in PLANS_DIR.iterdir():
+        if not directory.is_dir():
+            continue
+        plan_path = directory / "plan.json"
+        if not plan_path.exists():
+            continue
         try:
-            out.append({"slug": f.stem, "profession": json.loads(f.read_text(encoding="utf-8")).get("profession", "")})
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-    return out
+        pid = plan.get("plan_id")
+        if not pid or load_plan(pid) is not None:
+            continue                       # уже в БД — не трогаем
+        save_plan(plan)
+        moved += 1
+        # общее расписание
+        sched = directory / "schedule.json"
+        if sched.exists():
+            try:
+                save_schedule(pid, json.loads(sched.read_text(encoding="utf-8")), "")
+            except (json.JSONDecodeError, OSError):
+                pass
+        # расписания под профессии
+        for f in (directory / "schedules").glob("*.json") if (directory / "schedules").exists() else []:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                save_schedule(pid, data, data.get("profession", ""))
+            except (json.JSONDecodeError, OSError):
+                pass
+    return moved
 
 
 def _write_json(path: Path, data: dict):
@@ -614,29 +617,68 @@ PICK_TOPICS_SYSTEM = """
 Верни ТОЛЬКО JSON со slug'ами тем: {"topics": ["slug-temy", "drugoy-slug"]}
 """
 
-KIND_INSTRUCTIONS = {
-    "message": "Напиши связное сообщение сотруднику: 3–7 предложений, тёплый деловой тон, конкретика из документов.",
-    "checklist": "Оформи как чек-лист: короткое вступление и пронумерованные пункты, каждый — проверяемое действие.",
-    "survey": "Оформи как опрос: короткое вступление и вопросы с вариантами ответа. Укажи, что делать при тревожных ответах.",
-    "quiz": "Оформи как мини-тест: один-три вопроса, к каждому 3 варианта ответа и пометка, какой верный.",
-    "reminder": "Напиши короткое push-напоминание: 1–3 предложения, только суть и действие.",
-    "system_check": "Оформи как перечень проверяемых условий с пороговыми значениями и указанием, что происходит при невыполнении.",
-    "handover": "Оформи как задачу ответственному человеку (наставнику, руководителю или HR): что сделать, к какому сроку, что зафиксировать.",
+# Что дополнительно требуется в унифицированном сообщении под конкретный тип подэтапа.
+# Общий envelope один; здесь — акцент, какие интерактивные поля заполнять.
+KIND_GEN_HINT = {
+    "message": "Обычное сообщение. Заполни intro, body, key_points, outro. questions и checklist оставь пустыми.",
+    "reminder": "Короткое напоминание. Сделай body в 1–3 предложения, key_points минимально, без questions и checklist.",
+    "checklist": "Чек-лист. Заполни checklist проверяемыми пунктами (действие в каждом). questions оставь пустым.",
+    "survey": "Опрос. Заполни questions (2–5 вопросов, type single/multi/open, варианты БЕЗ поля correct — мнение, а не проверка).",
+    "quiz": "Тест. Заполни questions (1–3 вопроса), к каждому 3 варианта, у верных options.correct=true, добавь explanation.",
+    "system_check": "Проверка условий. Заполни checklist проверяемыми условиями с пороговыми значениями.",
+    "handover": "Задача ответственному (наставник/руководитель/HR). В body: что сделать, к какому сроку, что зафиксировать.",
 }
 
 GENERATE_SYSTEM = """
 Ты — НейроМастер, виртуальный наставник нового сотрудника производственной компании.
-Ты пишешь готовое сообщение, которое система отправит сотруднику в назначенное время.
+Готовишь ОДНО сообщение программы адаптации в едином машинном формате (JSON).
 
-Правила:
+Верни ТОЛЬКО валидный JSON без пояснений, строго такой структуры:
+{
+  "title": "краткий заголовок подэтапа",
+  "intro": "короткая дружелюбная обвязка-приветствие (1 предложение)",
+  "body": "основной текст: факты из документов, ПОЛНО и без сокращений",
+  "key_points": ["важный факт", "..."],
+  "questions": [
+    {"text": "вопрос", "type": "single|multi|open|bool",
+     "options": [{"text": "вариант", "correct": true}], "explanation": "пояснение"}
+  ],
+  "checklist": ["проверяемый пункт", "..."],
+  "outro": "короткое завершение / к кому обратиться",
+  "hr_note": "Уточнить у HR: ... (или пустая строка)"
+}
+
+Правила содержания:
 - Опирайся ТОЛЬКО на предоставленные фрагменты внутренних документов компании.
-- Не выдумывай цифры, сроки, нормы и названия. Если данных в контексте нет —
-  напиши общую формулировку и пометь в конце строкой: «Уточнить у HR: <что именно>».
-- Обращайся к сотруднику на «вы», имя подставляй плейсхолдером [Имя].
-  Другие неизвестные данные — плейсхолдерами вида [ФИО наставника], [номер КПП].
-- Пиши по-русски, без вступлений вроде «Конечно» и без рассуждений.
-- Не пиши заголовки, дату и время — только сам текст сообщения.
+- Не выдумывай цифры, сроки, нормы и названия. Нет данных — оставь общую формулировку
+  и заполни hr_note строкой «Уточнить у HR: <что именно>».
+- Важную информацию (нормы, суммы, сроки, названия) пиши БЕЗ сокращений и полностью.
+- Обвязка (intro/outro) — дружелюбная, но КРАТКАЯ. Основную суть держи в body.
+- Обращайся на «вы», имя — плейсхолдер [Имя]; другие неизвестные — [ФИО наставника] и т.п.
+- Пиши по-русски. Заполняй только уместные поля (см. тип сообщения); ненужные —
+  пустой строкой/массивом. Никакого текста вне JSON.
 """
+
+
+def _build_unified_content(data: dict, substage: dict) -> dict:
+    """Нормализует ответ LLM в унифицированный envelope + готовит text и converted."""
+    import msgconvert
+    kind = substage.get("kind") or "message"
+    content = {
+        "format": "unified/1",
+        "kind": kind,
+        "title": str(data.get("title") or substage.get("title") or "").strip(),
+        "intro": str(data.get("intro") or "").strip(),
+        "body": str(data.get("body") or "").strip(),
+        "key_points": [str(p).strip() for p in (data.get("key_points") or []) if str(p).strip()],
+        "questions": data.get("questions") or [],
+        "checklist": [str(p).strip() for p in (data.get("checklist") or []) if str(p).strip()],
+        "outro": str(data.get("outro") or "").strip(),
+        "hr_note": str(data.get("hr_note") or "").strip(),
+    }
+    content["text"] = msgconvert.to_text(content)          # плоский текст (совместимость)
+    content["converted"] = msgconvert.convert(content, kind)  # формат под тип подэтапа
+    return content
 
 
 def _substage_query(stage: dict, substage: dict) -> str:
@@ -686,10 +728,10 @@ def generate_substage_message(stage: dict, substage: dict, topic_list: list, pos
     position — должность/профессия сотрудника (из аккаунта): чанки берутся из «папки подэтапа»
     (разложенные по этому подэтапу), приоритет — чанкам этой профессии (буст по должности)."""
     import indexing
-    from rag import big_llm
+    from rag import big_llm, parse_json_response
 
     result = {"topics_used": [], "sources": [], "status": "generated", "error": None,
-              "content": {"format": "markdown", "text": ""}}
+              "content": {"format": "unified/1", "text": ""}}
     try:
         picked = pick_topics(stage, substage, topic_list)
         result["topics_used"] = picked
@@ -709,15 +751,20 @@ def generate_substage_message(stage: dict, substage: dict, topic_list: list, pos
             f"--- Фрагмент {i + 1} (документ: {c['source']}) ---\n{c['text']}"
             for i, c in enumerate(chunks)
         )
+        kind = substage.get("kind") or "message"
         user = (
             f"Этап программы адаптации: {stage.get('title')}\n"
             f"Подэтап: {substage.get('title')}\n"
-            f"Тип сообщения: {substage.get('kind')}. "
-            f"{KIND_INSTRUCTIONS.get(substage.get('kind'), KIND_INSTRUCTIONS['message'])}\n\n"
+            f"Тип сообщения: {kind}. {KIND_GEN_HINT.get(kind, KIND_GEN_HINT['message'])}\n\n"
             f"Что должен написать бот:\n{substage.get('brief') or substage.get('title')}\n\n"
             f"Фрагменты внутренних документов компании:\n{context}"
         )
-        result["content"]["text"] = big_llm(GENERATE_SYSTEM, user).strip()
+        raw = big_llm(GENERATE_SYSTEM, user)
+        try:
+            data = parse_json_response(raw)
+        except Exception:
+            data = {"body": (raw or "").strip()}     # фолбэк: непарсибельный ответ -> в body
+        result["content"] = _build_unified_content(data, substage)
     except Exception as e:
         result["status"] = "error"
         result["error"] = str(e)
@@ -759,13 +806,14 @@ def build_schedule(plan: dict, generated: dict, profession: str = "") -> dict:
 
 
 def save_schedule(plan_id: str, schedule: dict, profession: str = ""):
-    """Сохраняет расписание. Пустая profession -> общее (schedule.json); иначе — под должность
-    (schedules/<slug>.json). Так один план хранит и общий контент, и вариант под профессию."""
-    path = _schedule_path(plan_id, profession)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with _plans_lock:
-        _write_json(path, schedule)
-        path.with_suffix(".md").write_text(render_schedule_md(schedule), encoding="utf-8")
+    """Сохраняет расписание в БД (plan_schedules, JSONB). Пустая profession -> общее расписание;
+    иначе — под конкретную должность. Так один план хранит и общий контент, и вариант под профессию."""
+    prof = (profession or "").strip()
+    db.execute(
+        "INSERT INTO plan_schedules (plan_id, profession, data, updated_at) VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (plan_id, profession) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at",
+        (plan_id, prof, Json(schedule), datetime.now().isoformat(timespec="seconds")),
+    )
 
 
 # ---------- Фоновые задачи генерации ----------
@@ -909,10 +957,21 @@ def edit_message_text(plan_id: str, message_id: str, text: str, profession: str 
     schedule = load_schedule(plan_id, profession)
     if schedule is None:
         return None
+    import msgconvert
     for msg in schedule.get("messages") or []:
         if msg.get("message_id") == message_id:
-            msg.setdefault("content", {})["format"] = msg["content"].get("format", "markdown")
-            msg["content"]["text"] = text
+            # Ручная правка задаёт плоский текст: кладём его в body и пересобираем
+            # унифицированный envelope (text + converted под тип подэтапа).
+            content = dict(msg.get("content") or {})
+            content["format"] = "unified/1"
+            content["body"] = text
+            content["intro"] = ""
+            content["outro"] = ""
+            content["text"] = text
+            kind = (msg.get("substage") or {}).get("kind") or content.get("kind") or "message"
+            content["kind"] = kind
+            content["converted"] = msgconvert.convert(content, kind)
+            msg["content"] = content
             msg["status"] = "edited"
             msg["error"] = None
             schedule["generated_at"] = datetime.now().isoformat(timespec="seconds")

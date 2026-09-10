@@ -200,6 +200,28 @@ SCHEMA_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_activity_ts   ON activity_log(ts DESC)",
     "CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id, ts DESC)",
     "CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_log(event_type, ts DESC)",
+    # Планы адаптации. Раньше лежали файлами (data/plans/<id>/plan.json). Теперь — в БД
+    # как JSONB: один канонический план (структура этапов/подэтапов) на строку.
+    """
+    CREATE TABLE IF NOT EXISTS plans (
+        plan_id    TEXT PRIMARY KEY,
+        data       JSONB NOT NULL,
+        updated_at TEXT
+    )
+    """,
+    # Сгенерированные расписания плана. Один план — много расписаний: по одному на
+    # профессию/разряд (profession = полная строка должности, разряд внутри неё).
+    # profession='' — общее расписание (фолбэк для не перечисленных должностей).
+    """
+    CREATE TABLE IF NOT EXISTS plan_schedules (
+        plan_id    TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
+        profession TEXT NOT NULL DEFAULT '',
+        data       JSONB NOT NULL,
+        updated_at TEXT,
+        PRIMARY KEY (plan_id, profession)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_plan_sched_plan ON plan_schedules(plan_id)",
 )
 
 
