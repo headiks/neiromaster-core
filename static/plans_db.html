@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>База планов — НейроМастер</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --bg:#eef1f6;--surface:#fff;--surface-2:#f6f8fb;--ink:#15202e;--muted:#586475;--faint:#8b94a3;
+  --line:#e3e7ef;--line-2:#d2d9e4;--accent:#2f5fe0;--accent-soft:#e9f0fe;--accent-ink:#1e46bd;
+  --ok:#16794a;--ok-soft:#e2f2ea;--warn:#9a6a10;--warn-soft:#f7eed9;--err:#c0392b;--err-soft:#f8e6e3;
+  --shadow-sm:0 1px 2px rgba(21,32,46,.05);--shadow:0 8px 30px rgba(21,32,46,.12);
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0c1119;--surface:#151d29;--surface-2:#111825;--ink:#e7ecf4;--muted:#9aa5b4;--faint:#697484;
+  --line:#232f40;--line-2:#2f3d52;--accent:#6f97f5;--accent-soft:#182640;--accent-ink:#9db8fa;
+  --ok:#57c489;--ok-soft:#123023;--warn:#d6a955;--warn-soft:#2c2410;--err:#e5675d;--err-soft:#331d1a;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);--shadow:0 16px 44px rgba(0,0,0,.55);
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Manrope",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.5}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+.shell{max-width:1320px;margin:0 auto;padding:26px 20px 80px}
+.top{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:flex-end;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:11px}
+.logo{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#7c3aed);display:grid;place-items:center;color:#fff;font-size:18px}
+h1{font-size:1.28rem;font-weight:800;margin:0}
+.sub{color:var(--muted);font-size:.84rem;margin:1px 0 0}
+.actions{display:flex;gap:8px}
+.btn{border:1px solid var(--line-2);background:var(--surface);border-radius:9px;padding:8px 13px;font:inherit;font-size:.82rem;font-weight:600;color:var(--muted);cursor:pointer;text-decoration:none}
+.btn:hover{color:var(--ink)}
+.layout{display:grid;grid-template-columns:300px 1fr;gap:16px;margin-top:18px}
+@media(max-width:820px){.layout{grid-template-columns:1fr}}
+.panel{border:1px solid var(--line);border-radius:14px;background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
+.panel h2{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0;padding:13px 15px;border-bottom:1px solid var(--line);background:var(--surface-2)}
+.plans{max-height:74vh;overflow:auto}
+.p{display:block;width:100%;text-align:left;border:0;background:none;border-bottom:1px solid var(--line);padding:11px 15px;cursor:pointer;font:inherit;color:var(--ink)}
+.p:hover{background:var(--surface-2)}
+.p.on{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.p .n{font-weight:600}
+.p .m{font-size:.76rem;color:var(--faint)}
+.p .id{font-size:.68rem;color:var(--faint)}
+.badge{display:inline-block;font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.12em .5em;border-radius:6px;background:var(--ok-soft);color:var(--ok);margin-top:3px}
+.badge.no{background:var(--surface-2);color:var(--muted)}
+.body{padding:16px 18px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 18px;margin-bottom:14px}
+.kv{font-size:.82rem}
+.kv b{color:var(--muted);font-weight:600}
+.sec-h{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:18px 0 8px;font-weight:700}
+details{border:1px solid var(--line);border-radius:10px;background:var(--surface-2);margin:8px 0;overflow:hidden}
+summary{cursor:pointer;padding:10px 13px;font-weight:600;font-size:.85rem;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+summary::-webkit-details-marker{display:none}
+summary .tag{font-size:.7rem;font-weight:700;color:var(--accent-ink);background:var(--accent-soft);padding:.1em .5em;border-radius:6px}
+summary .cnt{margin-left:auto;color:var(--faint);font-size:.76rem;font-weight:500}
+pre{margin:0;padding:13px;max-height:520px;overflow:auto;background:var(--surface);border-top:1px solid var(--line);font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:.78rem;line-height:1.5;white-space:pre;color:var(--ink)}
+.msg{padding:44px 0;text-align:center;color:var(--muted)}
+.chip{border:1px solid var(--line-2);background:var(--surface);border-radius:999px;padding:4px 10px;font-size:.74rem;font-weight:600;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand">
+      <div class="logo">▤</div>
+      <div>
+        <h1>База планов</h1>
+        <div class="sub" id="scope-note">Планы адаптации в БД: структура и расписания (JSONB)</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="loadPlans()">Обновить</button>
+      <a class="btn" href="/admin">← Админка</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Планы <span id="plans-count" class="mono"></span></h2>
+      <div class="plans" id="plans"></div>
+    </div>
+    <div class="panel">
+      <h2>Строки БД</h2>
+      <div class="body" id="detail"><div class="msg">Выберите план слева.</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let PLANS = [];
+let current = '';
+
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+function api(u){return fetch(u).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
+function fmtTs(s){ if(!s) return '—'; const d=new Date(String(s).replace(' ','T')); return isNaN(d)?esc(s):d.toLocaleString('ru-RU',{year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }
+function jpre(obj){ return `<pre>${esc(JSON.stringify(obj,null,2))}</pre>`; }
+
+function renderPlans(){
+  const box=document.getElementById('plans');
+  document.getElementById('plans-count').textContent = PLANS.length?('· '+PLANS.length):'';
+  if(!PLANS.length){ box.innerHTML=`<div class="msg">Планов нет.</div>`; return; }
+  box.innerHTML = PLANS.map(p=>`
+    <button class="p ${current===p.plan_id?'on':''}" onclick="pick('${esc(p.plan_id)}')">
+      <div class="n">${esc(p.title||'без названия')}</div>
+      <div class="m">${p.role?esc(p.role)+' · ':''}этапов: ${p.stages||0} · подэтапов: ${p.substages||0}</div>
+      <div class="id mono">${esc(p.plan_id)}</div>
+      <span class="badge ${p.generated?'':'no'}">${p.generated?'есть расписания':'не сгенерирован'}</span>
+    </button>`).join('');
+}
+
+function pick(id){ current=id; renderPlans(); loadDetail(id); }
+
+function loadDetail(id){
+  const box=document.getElementById('detail');
+  box.innerHTML=`<div class="msg">Загрузка…</div>`;
+  // 1) структура плана (таблица plans.data)  2) список профессий  3) каждое расписание
+  api(`/plans/${encodeURIComponent(id)}`).then(r=>r.json()).then(d=>{
+    const plan=d.plan||{};
+    api(`/plans/${encodeURIComponent(id)}/professions`).then(r=>r.ok?r.json():{professions:[]}).then(pr=>{
+      const profs=(pr.professions||[]).map(x=>typeof x==='string'?x:(x.profession||''));
+      // ключи расписаний: общее ('') + каждая профессия
+      const keys=[''].concat(profs);
+      Promise.all(keys.map(k=>
+        api(`/plans/${encodeURIComponent(id)}/schedule${k?('?profession='+encodeURIComponent(k)):''}`)
+          .then(r=>r.status===404?null:r.json()).then(sch=>({key:k,sch})).catch(()=>({key:k,sch:null}))
+      )).then(list=>renderDetail(plan,list));
+    });
+  }).catch(()=>{ box.innerHTML=`<div class="msg">Не удалось загрузить план.</div>`; });
+}
+
+function renderDetail(plan,schedules){
+  const stages=(plan.stages||[]).length;
+  const subs=(plan.stages||[]).reduce((a,s)=>a+((s.substages||[]).length),0);
+  const rows=schedules.filter(x=>x.sch);
+  let html=`
+    <div class="meta">
+      <div class="kv"><b>plan_id:</b> <span class="mono">${esc(plan.plan_id||'—')}</span></div>
+      <div class="kv"><b>Название:</b> ${esc(plan.title||'—')}</div>
+      <div class="kv"><b>Роль:</b> ${esc(plan.role||'—')}</div>
+      <div class="kv"><b>Обновлён:</b> ${fmtTs(plan.updated_at)}</div>
+      <div class="kv"><b>Этапов/подэтапов:</b> ${stages}/${subs}</div>
+    </div>
+
+    <div class="sec-h">plans — структура плана (data JSONB)</div>
+    <details><summary>plans.data <span class="tag">JSONB</span><span class="cnt">${stages} этапов · ${subs} подэтапов</span></summary>${jpre(plan)}</details>
+
+    <div class="sec-h">plan_schedules — расписания (${rows.length} ${rows.length?'строк':'строк'})</div>`;
+
+  if(!rows.length){
+    html += `<div class="msg">Сгенерированных расписаний нет.</div>`;
+  } else {
+    html += schedules.map(({key,sch})=>{
+      if(!sch) return '';
+      const label = key ? esc(key) : 'Общее расписание (profession = \'\')';
+      const cnt = (sch.messages||[]).length;
+      return `<details><summary>${label} <span class="tag">JSONB</span><span class="cnt">${cnt} сообщений · ${fmtTs(sch.generated_at)}</span></summary>${jpre(sch)}</details>`;
+    }).join('');
+  }
+  document.getElementById('detail').innerHTML=html;
+}
+
+// охват (только подпись)
+api('/api/me').then(r=>r.json()).then(me=>{
+  document.getElementById('scope-note').textContent = (me.role==='owner'
+    ? 'Суперадмин' : 'Администратор') + ': планы адаптации в БД — структура (plans) и расписания (plan_schedules)';
+}).catch(()=>{});
+
+function loadPlans(){
+  const box=document.getElementById('plans');
+  box.innerHTML=`<div class="msg">Загрузка…</div>`;
+  api('/plans').then(r=>r.json()).then(d=>{ PLANS=(d.plans||[]); renderPlans(); if(current) loadDetail(current); })
+    .catch(()=>{ box.innerHTML=`<div class="msg">Не удалось загрузить список планов.</div>`; });
+}
+loadPlans();
+</script>
+</body>
+</html>

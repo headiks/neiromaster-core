@@ -78,6 +78,12 @@ async def logs_page(request: Request):
     return page_for_admin(request, "logs.html")
 
 
+@router.get("/plans-db", response_class=HTMLResponse)
+async def plans_db_page(request: Request):
+    """Просмотр БД планов адаптации: структура (plans) и расписания (plan_schedules) в JSONB."""
+    return page_for_admin(request, "plans_db.html")
+
+
 @router.get("/doc-breakdown", response_class=HTMLResponse)
 async def doc_breakdown_page(request: Request):
     """Страница просмотра разбора документа (блоки → чанки, метки, обоснования)."""
