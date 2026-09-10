@@ -56,6 +56,16 @@
             <button class="ghost-btn" onclick="refreshPlanTexts()"><i data-lucide="refresh-cw"></i> Обновить</button>
             <span id="pt-meta" class="hint" style="margin-left:auto;"></span>
         </div>
+        <div class="toolbar" style="margin:10px 0;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <button class="primary-btn" id="pt-generate-btn" onclick="ptGeneratePlan()"><i data-lucide="sparkles"></i> Сгенерировать / перегенерировать план</button>
+            <button class="ghost-btn" id="pt-generate-all-btn" onclick="ptGenerateAll()"><i data-lucide="layers"></i> Перегенерировать все планы</button>
+            <button class="ghost-btn" id="pt-cancel-btn" onclick="ptCancelGeneration()" style="display:none;"><i data-lucide="x-circle"></i> Отменить генерацию</button>
+            <span id="pt-status" style="color:#475569;font-size:14px;"></span>
+        </div>
+        <div class="progress-wrap" id="pt-progress-wrap" style="display:none;">
+            <div class="progress-bar"><div id="pt-progress-fill"></div></div>
+            <div class="progress-label" id="pt-progress-label"></div>
+        </div>
         <div id="pt-body"></div>
     </div>
 
@@ -151,17 +161,11 @@
 
         <div class="toolbar" style="margin-top:24px;">
             <button class="primary-btn" onclick="savePlan()"><i data-lucide="save"></i> Сохранить план</button>
-            <button class="primary-btn" id="generate-btn" onclick="generatePlan()"><i data-lucide="sparkles"></i> Сгенерировать ответы</button>
-            <button class="ghost-btn" id="cancel-gen-btn" onclick="cancelGeneration()" style="display:none;"><i data-lucide="x-circle"></i> Отменить генерацию</button>
             <span id="plan-status" style="color:#475569;font-size:14px;"></span>
         </div>
-
-        <div class="progress-wrap" id="progress-wrap" style="display:none;">
-            <div class="progress-bar"><div id="progress-fill"></div></div>
-            <div class="progress-label" id="progress-label"></div>
+        <div class="stage-hint" style="margin-top:12px;">
+            Генерация текстов, перегенерация и правка сообщений — на вкладке «Тексты плана».
         </div>
-
-        <div id="schedule-result"></div>
     </div>
 
     <!-- ==================== ПОЛЬЗОВАТЕЛИ ==================== -->

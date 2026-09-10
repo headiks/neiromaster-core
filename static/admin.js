@@ -277,7 +277,10 @@
                     const profs = d.professions || [];
                     document.getElementById('pt-prof').innerHTML =
                         '<option value="">Общий текст</option>' +
-                        profs.map(p => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`).join('');
+                        profs.map(p => {
+                            const name = (typeof p === 'string') ? p : (p.profession || p.slug || '');
+                            return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+                        }).join('');
                 }).finally(renderPlanTexts);
         }
         function renderPlanTexts() {
@@ -308,11 +311,18 @@
                             const txt = ((m.content || {}).text || '').trim();
                             const kind = (m.substage || {}).kind || '';
                             const st2 = m.status && m.status !== 'generated' ? ` <span class="pt-status">${escapeHtml(m.status)}</span>` : '';
-                            const src = (m.sources || []).length ? `<div class="pt-src">Источники: ${m.sources.map(s => escapeHtml(typeof s === 'string' ? s : (s.filename || s.title || ''))).filter(Boolean).join(', ')}</div>` : '';
-                            return `<div class="pt-sub">
+                            const srcNames = [...new Set((m.sources || []).map(s => typeof s === 'string' ? s : (s.source || s.filename || s.title || '')).filter(Boolean))];
+                            const src = srcNames.length ? `<div class="pt-src">Источники: ${srcNames.map(escapeHtml).join(', ')}</div>` : '';
+                            const mid = m.message_id || '';
+                            const actions = mid ? `<div class="pt-actions" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+                                <button class="icon-btn" onclick="editPlanText('${escapeHtml(mid)}', this)"><i data-lucide="pencil"></i> Редактировать</button>
+                                <button class="icon-btn pt-regen" onclick="regenPlanText('${escapeHtml(mid)}', this)"><i data-lucide="refresh-cw"></i> Перегенерировать</button>
+                            </div>` : '';
+                            return `<div class="pt-sub" data-mid="${escapeHtml(mid)}">
                                 <div class="pt-sub-h"><b>${escapeHtml((m.substage || {}).title || '')}</b>${kind ? ` <span class="pt-kind">${escapeHtml(kind)}</span>` : ''}${st2}</div>
-                                <div class="pt-text">${txt ? escapeHtml(txt) : '<span class="empty-hint">— текст пуст —</span>'}</div>
+                                <div class="pt-text" data-raw="${encodeURIComponent(txt)}">${txt ? escapeHtml(txt) : '<span class="empty-hint">— текст пуст —</span>'}</div>
                                 ${src}
+                                ${actions}
                             </div>`;
                         }).join('');
                         return `<section class="pt-stage"><h3 class="pt-stage-h">${i + 1}. ${escapeHtml(st.title || '')}</h3>${subs}</section>`;
@@ -320,6 +330,18 @@
                     refreshIcons();
                 })
                 .catch(() => { body.innerHTML = '<div class="empty-hint">Не удалось загрузить тексты.</div>'; });
+        }
+
+        function regenPlanText(messageId, btn) {
+            const pid = document.getElementById('pt-plan').value;
+            const prof = document.getElementById('pt-prof').value || '';
+            if (!pid || !messageId) return;
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i data-lucide="loader"></i> Генерация…'; refreshIcons(); }
+            const q = prof ? '?profession=' + encodeURIComponent(prof) : '';
+            api(`/plans/${encodeURIComponent(pid)}/messages/${encodeURIComponent(messageId)}/regenerate${q}`, { method: 'POST' })
+                .then(r => r.ok ? r.json() : Promise.reject(new Error('regenerate')))
+                .then(() => renderPlanTexts())
+                .catch(() => { if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="triangle-alert"></i> Ошибка, повторить'; refreshIcons(); } });
         }
 
         function loadStageBoard() {
@@ -858,7 +880,6 @@
                 // Создание нового плана отключено — просто очищаем редактор.
                 plan = emptyPlan();
                 document.getElementById('stages-container').innerHTML = '';
-                document.getElementById('schedule-result').innerHTML = '';
                 fillPlanMeta();
                 setStatus('Выберите план для редактирования');
                 return;
@@ -867,15 +888,12 @@
                 plan = data.plan;
                 fillPlanMeta();
                 renderStages();
-                document.getElementById('schedule-result').innerHTML = '';
-                loadScheduleIfAny();
             });
         }
 
         function newPlan() {
             plan = emptyPlan();
             document.getElementById('plan-select').value = '';
-            document.getElementById('schedule-result').innerHTML = '';
             fillPlanMeta();
             renderStages();
             setStatus('');
@@ -890,7 +908,6 @@
                     plan = p;
                     fillPlanMeta();
                     renderStages();
-                    document.getElementById('schedule-result').innerHTML = '';
                     refreshPlanList().then(() => { document.getElementById('plan-select').value = p.plan_id; });
                     setStatus('Полный шаблон создан — редактируйте под задачу');
                 });
@@ -1242,36 +1259,36 @@
                 .catch(err => setStatus(`Ошибка сохранения: ${err.message}`));
         }
 
-        function generatePlan() {
-            if (!plan.stages.some(s => s.substages.length)) {
-                setStatus('Добавьте хотя бы один подэтап.');
-                return;
-            }
-            document.getElementById('generate-btn').disabled = true;
-            savePlan().then(() =>
-                apiJson(`/plans/${encodeURIComponent(plan.plan_id)}/generate`, { method: 'POST' })
-            ).then(({ ok, data }) => {
-                if (!ok) {
-                    setStatus(`${data.detail || 'Не удалось запустить генерацию'}`);
-                    document.getElementById('generate-btn').disabled = false;
-                    return;
-                }
-                setStatus('Генерация запущена');
-                currentGenJob = data.job_id;
-                document.getElementById('cancel-gen-btn').style.display = '';
-                pollJob(data.job_id);
-            }).catch(err => {
-                setStatus(`${err.message}`);
-                document.getElementById('generate-btn').disabled = false;
-            });
+        // ---------------- Генерация/перегенерация во вкладке «Тексты плана» ----------------
+        function ptSetStatus(text) { document.getElementById('pt-status').textContent = text || ''; }
+        function ptSetBusy(busy) {
+            document.getElementById('pt-generate-btn').disabled = busy;
+            document.getElementById('pt-generate-all-btn').disabled = busy;
+            document.getElementById('pt-cancel-btn').style.display = busy ? '' : 'none';
         }
 
-        function pollJob(jobId) {
-            const wrap = document.getElementById('progress-wrap');
-            const fill = document.getElementById('progress-fill');
-            const label = document.getElementById('progress-label');
-            wrap.style.display = 'block';
+        function ptGeneratePlan() {
+            const pid = document.getElementById('pt-plan').value;
+            if (!pid) { ptSetStatus('Выберите план.'); return; }
+            const prof = document.getElementById('pt-prof').value || '';
+            ptSetBusy(true);
+            ptSetStatus(prof ? `Генерация для «${prof}»…` : 'Генерация общего текста…');
+            // profession всегда передаём -> перегенерируем только выбранное расписание,
+            // а не под все должности разом. Пустой -> только общий текст.
+            apiJson(`/plans/${encodeURIComponent(pid)}/generate?profession=${encodeURIComponent(prof)}`, { method: 'POST' })
+                .then(({ ok, data }) => {
+                    if (!ok) { ptSetStatus(data.detail || 'Не удалось запустить генерацию'); ptSetBusy(false); return; }
+                    currentGenJob = data.job_id;
+                    ptPollJob(data.job_id, () => { renderPlanTexts(); loadPlanTexts(); });
+                })
+                .catch(err => { ptSetStatus(err.message); ptSetBusy(false); });
+        }
 
+        function ptPollJob(jobId, onDone) {
+            const wrap = document.getElementById('pt-progress-wrap');
+            const fill = document.getElementById('pt-progress-fill');
+            const label = document.getElementById('pt-progress-label');
+            wrap.style.display = 'block';
             clearInterval(pollTimer);
             pollTimer = setInterval(() => {
                 api(`/jobs/${encodeURIComponent(jobId)}`).then(r => r.json()).then(job => {
@@ -1280,37 +1297,87 @@
                     label.textContent = job.status === 'running'
                         ? `Подэтап ${job.done} из ${job.total}${job.current ? ' · ' + job.current : ''}${job.errors ? ' · ошибок: ' + job.errors : ''}`
                         : `Статус: ${job.status} · ${job.done} из ${job.total}${job.errors ? ' · ошибок: ' + job.errors : ''}`;
-
                     if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
                         clearInterval(pollTimer);
                         currentGenJob = null;
-                        document.getElementById('generate-btn').disabled = false;
-                        document.getElementById('cancel-gen-btn').style.display = 'none';
-                        setStatus(job.status === 'done' ? 'Генерация завершена'
+                        ptSetBusy(false);
+                        ptSetStatus(job.status === 'done' ? 'Генерация завершена'
                             : job.status === 'cancelled' ? 'Генерация отменена (сгенерированное сохранено)'
-                            : `${job.error}`);
-                        loadScheduleIfAny();
-                        refreshPlanList();
+                            : (job.error || 'Ошибка'));
+                        if (onDone) onDone();
                     }
                 }).catch(() => clearInterval(pollTimer));
             }, 1500);
         }
 
-        function cancelGeneration() {
+        function ptCancelGeneration() {
             if (!currentGenJob) return;
-            const btn = document.getElementById('cancel-gen-btn');
-            btn.disabled = true;
-            setStatus('Отмена…');
-            api(`/jobs/${encodeURIComponent(currentGenJob)}/cancel`, { method: 'POST' })
-                .finally(() => { btn.disabled = false; });
+            ptSetStatus('Отмена…');
+            api(`/jobs/${encodeURIComponent(currentGenJob)}/cancel`, { method: 'POST' }).catch(() => {});
         }
 
-        function loadScheduleIfAny() {
-            if (!plan.plan_id) return;
-            api(`/plans/${encodeURIComponent(plan.plan_id)}/schedule`)
-                .then(res => res.ok ? res.json() : null)
-                .then(schedule => { if (schedule) renderSchedule(schedule); })
-                .catch(() => {});
+        // Перегенерация всех планов подряд: один за другим прогоняем полную генерацию.
+        function ptGenerateAll() {
+            if (!confirm('Перегенерировать тексты ВСЕХ планов? Это может занять время.')) return;
+            ptSetBusy(true);
+            api('/plans').then(r => r.json()).then(d => {
+                const ids = (d.plans || []).map(p => p.plan_id);
+                if (!ids.length) { ptSetStatus('Планов нет.'); ptSetBusy(false); return; }
+                let i = 0;
+                const next = () => {
+                    if (i >= ids.length) {
+                        ptSetStatus(`Готово: перегенерировано планов — ${ids.length}`);
+                        ptSetBusy(false);
+                        renderPlanTexts(); loadPlanTexts();
+                        return;
+                    }
+                    const pid = ids[i++];
+                    ptSetStatus(`Генерация плана ${i} из ${ids.length}…`);
+                    apiJson(`/plans/${encodeURIComponent(pid)}/generate`, { method: 'POST' })
+                        .then(({ ok, data }) => {
+                            if (!ok) { next(); return; }   // план без подэтапов пропускаем
+                            currentGenJob = data.job_id;
+                            ptPollJob(data.job_id, next);
+                        })
+                        .catch(() => next());
+                };
+                next();
+            }).catch(err => { ptSetStatus(err.message); ptSetBusy(false); });
+        }
+
+        // ---------------- Ручная правка текста сообщения ----------------
+        function editPlanText(mid, btn) {
+            const sub = btn.closest('.pt-sub');
+            if (!sub) return;
+            const cur = decodeURIComponent(sub.querySelector('.pt-text').dataset.raw || '');
+            const ta = document.createElement('textarea');
+            ta.className = 'pt-edit'; ta.value = cur;
+            ta.style.cssText = 'width:100%;min-height:140px;margin-top:6px;';
+            const bar = document.createElement('div');
+            bar.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
+            bar.innerHTML = `<button class="primary-btn" onclick="savePlanText('${escapeHtml(mid)}', this)"><i data-lucide="save"></i> Сохранить</button>
+                             <button class="ghost-btn" onclick="renderPlanTexts()">Отмена</button>`;
+            sub.querySelector('.pt-text').after(ta);
+            ta.after(bar);
+            btn.style.display = 'none';
+            refreshIcons();
+            ta.focus();
+        }
+
+        function savePlanText(mid, btn) {
+            const pid = document.getElementById('pt-plan').value;
+            const prof = document.getElementById('pt-prof').value || '';
+            const sub = btn.closest('.pt-sub');
+            const ta = sub && sub.querySelector('.pt-edit');
+            if (!pid || !ta) return;
+            btn.disabled = true;
+            apiJson(`/plans/${encodeURIComponent(pid)}/messages/${encodeURIComponent(mid)}`,
+                { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: ta.value, profession: prof }) })
+                .then(({ ok, data }) => {
+                    if (!ok) { btn.disabled = false; alert(data.detail || 'Не удалось сохранить'); return; }
+                    renderPlanTexts();
+                })
+                .catch(err => { btn.disabled = false; alert(err.message); });
         }
 
         function whenLabel(msg) {
@@ -1333,37 +1400,9 @@
                             ${msg.folders_used && msg.folders_used.length ? '' + escapeHtml(msg.folders_used.join(', ')) + ' · ' : ''}
                             ${msg.sources && msg.sources.length ? '' + escapeHtml([...new Set(msg.sources.map(s => s.source))].join(', ')) : ''}
                         </div>
-                        ${withRegenerate ? `<button class="icon-btn" style="margin-top:8px;"
-                                onclick="regenerate('${escapeHtml(msg.message_id)}')"><i data-lucide="refresh-cw"></i> Перегенерировать</button>` : ''}
                     </td>
                 </tr>
             `).join('');
-        }
-
-        function renderSchedule(schedule) {
-            const base = `/plans/${encodeURIComponent(schedule.plan_id)}/export`;
-            document.getElementById('schedule-result').innerHTML = `
-                <h2 class="section-title"><i data-lucide="upload"></i> Сгенерированное расписание шаблона</h2>
-                <div class="export-links">
-                    <a href="${base}/schedule.md" download><i data-lucide="download"></i> schedule.md — расписание с ответами</a>
-                    <a href="${base}/schedule.json" download><i data-lucide="download"></i> schedule.json — для мессенджеров и приложения</a>
-                    <a href="${base}/plan.md" download><i data-lucide="download"></i> plan.md — план в формате для LLM</a>
-                    <a href="${base}/plan.json" download><i data-lucide="download"></i> plan.json — канонический план</a>
-                </div>
-                <table class="schedule">
-                    <thead><tr><th>Этап</th><th>Подэтап</th><th>Дата и время</th><th>Ответ</th></tr></thead>
-                    <tbody>${messageRows(schedule.messages, true)}</tbody>
-                </table>
-            `;
-        }
-
-        function regenerate(messageId) {
-            setStatus(`Перегенерация: ${messageId}`);
-            api(`/plans/${encodeURIComponent(plan.plan_id)}/messages/${encodeURIComponent(messageId)}/regenerate`,
-                { method: 'POST' })
-                .then(res => res.json())
-                .then(() => { setStatus('Подэтап обновлён'); loadScheduleIfAny(); })
-                .catch(err => setStatus(`${err.message}`));
         }
 
         // ---------------- Пользователи ----------------

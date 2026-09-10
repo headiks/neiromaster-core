@@ -798,10 +798,12 @@ def cancel_job(job_id: str) -> Optional[dict]:
         return dict(job)
 
 
-def start_generation(plan: dict, positions: Optional[list] = None) -> dict:
+def start_generation(plan: dict, positions: Optional[list] = None, include_general: bool = True) -> dict:
     """Запускает генерацию плана в фоне. positions — список уникальных должностей (из штатки):
     под КАЖДУЮ генерируется своё расписание (чанки её профессии + общие), сотрудники этой
-    должности берут готовое. Без positions — одно общее расписание (profession="")."""
+    должности берут готовое. Без positions — одно общее расписание (profession="").
+    include_general=False — генерировать только перечисленные должности, без общего расписания
+    (для точечной перегенерации одной должности)."""
     import folders
 
     # Уникальные должности + общее ("") как фолбэк для профессий без своего расписания.
@@ -811,7 +813,7 @@ def start_generation(plan: dict, positions: Optional[list] = None) -> dict:
         if p and p not in profs:
             profs.append(p)
     profs = profs or [""]                 # хотя бы общее расписание
-    if profs != [""] and "" not in profs:
+    if include_general and profs != [""] and "" not in profs:
         profs = profs + [""]              # плюс общее — для не перечисленных должностей
 
     job_id = str(uuid.uuid4())
@@ -899,3 +901,21 @@ def regenerate_one(plan: dict, message_id: str, profession: str = "") -> Optiona
 
     save_schedule(plan["plan_id"], schedule, profession=profession)
     return next((m for m in schedule["messages"] if m["message_id"] == message_id), None)
+
+
+def edit_message_text(plan_id: str, message_id: str, text: str, profession: str = "") -> Optional[dict]:
+    """Ручная правка текста одного сообщения в расписании нужной профессии.
+    Возвращает обновлённое сообщение или None, если сообщения нет."""
+    schedule = load_schedule(plan_id, profession)
+    if schedule is None:
+        return None
+    for msg in schedule.get("messages") or []:
+        if msg.get("message_id") == message_id:
+            msg.setdefault("content", {})["format"] = msg["content"].get("format", "markdown")
+            msg["content"]["text"] = text
+            msg["status"] = "edited"
+            msg["error"] = None
+            schedule["generated_at"] = datetime.now().isoformat(timespec="seconds")
+            save_schedule(plan_id, schedule, profession=profession)
+            return msg
+    return None

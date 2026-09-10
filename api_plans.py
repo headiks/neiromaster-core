@@ -112,16 +112,21 @@ def _staffing_positions() -> list:
 
 
 @router.post("/plans/{plan_id}/generate", dependencies=admin_only)
-async def generate_plan(plan_id: str):
+async def generate_plan(plan_id: str, profession: str | None = None):
     """
-    Запускает фоновую генерацию контента плана. План один; контент собирается под КАЖДУЮ
-    уникальную должность из штатки (плюс общее расписание). Прогресс — через GET /jobs/{job_id}.
+    Запускает фоновую генерацию контента плана. Прогресс — через GET /jobs/{job_id}.
+    profession задан — перегенерировать только это расписание (одна должность, либо общее
+    при profession=""). Без profession — под КАЖДУЮ должность из штатки плюс общее.
     """
     plan = planner.load_plan(plan_id)
     if plan is None:
         raise HTTPException(status_code=404, detail="План не найден")
     if not any(s.get("substages") for s in plan.get("stages") or []):
         raise HTTPException(status_code=400, detail="В плане нет ни одного подэтапа")
+    if profession is not None:
+        prof = profession.strip()
+        return planner.start_generation(plan, positions=[prof] if prof else None,
+                                        include_general=not prof)
     return planner.start_generation(plan, positions=_staffing_positions())
 
 
@@ -187,6 +192,20 @@ def regenerate_message(plan_id: str, message_id: str, profession: str | None = N
     message = planner.regenerate_one(plan, message_id, profession or "")
     if message is None:
         raise HTTPException(status_code=404, detail="Подэтап не найден в плане")
+    return message
+
+
+class MessageEdit(BaseModel):
+    text: str
+    profession: str | None = None
+
+
+@router.put("/plans/{plan_id}/messages/{message_id}", dependencies=admin_only)
+def edit_message(plan_id: str, message_id: str, req: MessageEdit):
+    """Ручная правка текста одного сообщения плана в расписании нужной профессии."""
+    message = planner.edit_message_text(plan_id, message_id, req.text, req.profession or "")
+    if message is None:
+        raise HTTPException(status_code=404, detail="Сообщение не найдено")
     return message
 
 
