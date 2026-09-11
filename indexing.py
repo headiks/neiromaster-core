@@ -715,6 +715,20 @@ def enqueue_document(filepath: Path) -> dict:
     return get_index_job(job_id)
 
 
+def requeue_stranded() -> int:
+    """Возвращает в очередь документы, зависшие в 'uploaded'/'processing'. Очередь — в
+    памяти процесса, поэтому рестарт приложения (или потерянная задача) оставлял бы такие
+    файлы навсегда «Загружен», не индексируя. Зовётся при старте. Возвращает число."""
+    n = 0
+    for entry in _load_registry().values():
+        if entry.get("status") in ("uploaded", "processing"):
+            enqueue_document(DOCS_DIR / entry["filename"])
+            n += 1
+    if n:
+        print(f"[index] возвращено в очередь зависших документов: {n}")
+    return n
+
+
 # ---------- Массовая индексация папки (используется CLI-скриптом) ----------
 def index_all_documents(docs_dir: Optional[Path] = None, recreate: bool = False):
     docs_dir = Path(docs_dir) if docs_dir else DOCS_DIR

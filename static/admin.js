@@ -175,6 +175,23 @@
             if (settled) loadFolders();   // документ отнесён к папкам -> пересчитать «N док.»
         }
 
+        // Живая сводка над списком: какой документ сейчас обрабатывается и сколько в очереди.
+        function renderProcSummary(docs) {
+            const el = document.getElementById('doc-proc-summary');
+            if (!el) return;
+            const active = docs.filter(d => d.status === 'processing' || d.status === 'reanalyzing');
+            const queued = docs.filter(d => d.status === 'uploaded');
+            if (!active.length && !queued.length) { el.style.display = 'none'; return; }
+            const parts = [];
+            if (active.length) {
+                const names = active.map(d => escapeHtml(d.filename)).join(', ');
+                parts.push(`<span style="color:#78350f;">⏳ Обрабатывается: ${names}</span>`);
+            }
+            if (queued.length) parts.push(`<span style="color:#475569;">в очереди: ${queued.length}</span>`);
+            el.innerHTML = parts.join(' · ');
+            el.style.display = 'block';
+        }
+
         function statusLabel(status) {
             switch (status) {
                 case 'uploaded': return 'Загружен';
@@ -200,6 +217,7 @@
                 docsCache = docs;
                 anyReanalyzing = docs.some(doc => doc.status === 'reanalyzing');
                 renderDocuments(docs);
+                renderProcSummary(docs);
                 reconcilePending(docs);
             }).catch(() => {});
         }

@@ -117,8 +117,9 @@
         .doc-status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
         .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; white-space: nowrap; }
         .status-badge.uploaded { background: #e2e8f0; color: #475569; }
-        .status-badge.processing { background: #fde68a; color: #78350f; }
-        .status-badge.reanalyzing { background: #fde68a; color: #78350f; }
+        .status-badge.processing { background: #fde68a; color: #78350f; animation: badgePulse 1.1s ease-in-out infinite; }
+        .status-badge.reanalyzing { background: #fde68a; color: #78350f; animation: badgePulse 1.1s ease-in-out infinite; }
+        @keyframes badgePulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
         .status-badge.indexed { background: #bbf7d0; color: #14532d; }
         .status-badge.error { background: #fecaca; color: #991b1b; }
         .status-badge.planned { background: #dbeafe; color: #1e40af; }
