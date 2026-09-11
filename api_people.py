@@ -252,6 +252,29 @@ async def materialize_user_schedule(user_id: str, actor: dict = Depends(require_
     return {"materialized": count}
 
 
+class TestMessage(BaseModel):
+    title: str | None = None
+    body: str | None = None
+
+
+class NotifyTestRequest(BaseModel):
+    messages: list[TestMessage] = []
+
+
+@router.post("/users/{user_id}/notify-test", dependencies=admin_only)
+async def notify_test(user_id: str, req: NotifyTestRequest, actor: dict = Depends(require_admin)):
+    """Тестировщик уведомлений: кладёт несколько сообщений в инбокс выбранного
+    пользователя. Он увидит их очередью на своей странице (кабинет/админка)."""
+    target = _target_user(user_id, actor)
+    msgs = [m for m in req.messages if (m.title or "").strip() or (m.body or "").strip()]
+    if not msgs:
+        raise HTTPException(status_code=400, detail="Нет сообщений для отправки")
+    for m in msgs:
+        messaging.push_test(target["id"], (m.title or "").strip(), (m.body or "").strip())
+    return {"sent": len(msgs), "unread": messaging.unread_count(target["id"]),
+            "target": target.get("full_name") or target.get("username") or target["id"]}
+
+
 EMPLOYEE_EXPORTS = {"schedule.json", "schedule.md"}
 
 

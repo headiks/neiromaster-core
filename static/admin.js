@@ -24,6 +24,76 @@
             return api(url, options).then(res => res.json().then(data => ({ ok: res.ok, data })));
         }
 
+        // ---------------- Тестировщик уведомлений ----------------
+        function ntRowHtml() {
+            return `<div class="nt-row" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;">
+                <input class="nt-title" placeholder="Заголовок (необязательно)"
+                       style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;margin-bottom:8px;">
+                <textarea class="nt-body" rows="2" placeholder="Текст сообщения"
+                       style="width:100%;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;box-sizing:border-box;"></textarea>
+                <div style="text-align:right;margin-top:6px;">
+                    <button class="ghost-btn" style="padding:4px 10px;font-size:13px;" onclick="this.closest('.nt-row').remove()">Удалить</button>
+                </div>
+            </div>`;
+        }
+
+        function ntAddMessage() {
+            const box = document.getElementById('nt-messages');
+            box.insertAdjacentHTML('beforeend', ntRowHtml());
+            refreshIcons();
+        }
+
+        function openNotifyTester() {
+            const dlg = document.getElementById('notify-tester-dialog');
+            document.getElementById('nt-error').style.display = 'none';
+            document.getElementById('nt-result').style.display = 'none';
+            const box = document.getElementById('nt-messages');
+            box.innerHTML = '';
+            ntAddMessage();
+            const sel = document.getElementById('nt-user');
+            sel.innerHTML = '<option>Загрузка…</option>';
+            Promise.all([
+                api('/api/me').then(r => r.json()).catch(() => ({})),
+                api('/users').then(r => r.json()).catch(() => ({ users: [] })),
+            ]).then(([me, d]) => {
+                const list = (d.users || []).filter(u => u.has_account);
+                sel.innerHTML = list.map(u =>
+                    `<option value="${escapeHtml(u.id)}">${escapeHtml(u.full_name || u.username)}`
+                    + `${u.id === (me && me.id) ? ' — это я' : ''}`
+                    + ` · ${escapeHtml(u.role || 'employee')}</option>`).join('');
+                if (me && me.id) sel.value = me.id;   // по умолчанию — себе, для предпросмотра
+            });
+            dlg.showModal();
+            refreshIcons();
+        }
+
+        function ntSend() {
+            const err = document.getElementById('nt-error');
+            const res = document.getElementById('nt-result');
+            err.style.display = 'none';
+            const userId = document.getElementById('nt-user').value;
+            const messages = [...document.querySelectorAll('#nt-messages .nt-row')].map(row => ({
+                title: row.querySelector('.nt-title').value.trim(),
+                body: row.querySelector('.nt-body').value.trim(),
+            })).filter(m => m.title || m.body);
+            if (!userId) { err.textContent = 'Выберите пользователя'; err.style.display = 'block'; return; }
+            if (!messages.length) { err.textContent = 'Добавьте хотя бы одно сообщение'; err.style.display = 'block'; return; }
+            const btn = document.getElementById('nt-send');
+            btn.disabled = true;
+            apiJson(`/users/${encodeURIComponent(userId)}/notify-test`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages }),
+            }).then(({ ok, data }) => {
+                btn.disabled = false;
+                if (!ok) { err.textContent = data.detail || 'Не удалось отправить'; err.style.display = 'block'; return; }
+                res.textContent = `Отправлено ${data.sent} для «${data.target}». Непрочитано у него: ${data.unread}.`;
+                res.style.display = 'block';
+                // если слали себе — уведомления всплывут здесь (notify.js опрашивает инбокс)
+                if (window.nmPollNow) window.nmPollNow();
+            }).catch(() => { btn.disabled = false; err.textContent = 'Ошибка сети'; err.style.display = 'block'; });
+        }
+
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
                 document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));

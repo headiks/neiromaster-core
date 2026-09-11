@@ -133,6 +133,9 @@
       .catch(function () {});
   }
 
+  // Немедленный опрос инбокса (после отправки теста себе — чтобы всплыло сразу).
+  window.nmPollNow = poll;
+
   // Ручной тест из админки: отправить себе и сразу опросить.
   window.nmTestNotification = function (title, body) {
     ensurePermission();
