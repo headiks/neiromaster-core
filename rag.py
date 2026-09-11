@@ -26,8 +26,11 @@ HISTORY_WINDOW = 3   # сколько последних вопросов пол
 # регламентов, вопросы сотрудников). Включается переменной NEIROMASTER_DEBUG=1.
 DEBUG = os.environ.get("NEIROMASTER_DEBUG", "").lower() in ("1", "true", "yes")
 
-SMALL_LLM_TIMEOUT = 60
-BIG_LLM_TIMEOUT = 90
+# qwen3:14b с ctx 16k под очередью (генерация плана — десятки подэтапов подряд) нередко
+# отвечает дольше 90 с — прежний жёсткий таймаут ронял подэтапы в error (Read timed out).
+# Держим щедрый дефолт + переопределение через env; на таймаут — один повтор.
+SMALL_LLM_TIMEOUT = int(os.environ.get("NEIROMASTER_SMALL_LLM_TIMEOUT", "120"))
+BIG_LLM_TIMEOUT = int(os.environ.get("NEIROMASTER_BIG_LLM_TIMEOUT", "300"))
 QDRANT_TIMEOUT = 15
 
 # ---------- Быстрый префильтр для общих фраз и ключевых слов ----------
@@ -116,8 +119,7 @@ def small_llm(system, user, step_name="SMALL_LLM"):
 
 def big_llm(system, user):
     log("BIG_LLM", f"Запрос к большой модели:\n  system={system[:80]}...\n  user={user[:80]}...")
-    start = time.time()
-    r = requests.post(f"{OLLAMA}/api/chat", json={
+    payload = {
         "model": BIG_MODEL,
         "messages": [
             {"role": "system", "content": system},
@@ -129,7 +131,18 @@ def big_llm(system, user):
         # держим общий с docpipe, чтобы модель не перегружалась на другой контекст.
         # seed — воспроизводимость: один и тот же вопрос даёт один и тот же ответ.
         "options": {"num_keep": 0, "temperature": 0, "num_ctx": BIG_NUM_CTX, "seed": 7},
-    }, timeout=BIG_LLM_TIMEOUT)
+    }
+    # Таймаут/обрыв соединения к Ollama под очередью — транзиентны: один повтор спасает
+    # подэтап от падения в error при генерации плана (десятки запросов подряд).
+    start = time.time()
+    for attempt in (1, 2):
+        try:
+            r = requests.post(f"{OLLAMA}/api/chat", json=payload, timeout=BIG_LLM_TIMEOUT)
+            break
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            if attempt == 2:
+                raise
+            log("BIG_LLM", f"Попытка {attempt} не удалась ({e}); повтор")
     r.raise_for_status()
     response = r.json()["message"]["content"]
     elapsed = time.time() - start
