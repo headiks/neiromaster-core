@@ -15,7 +15,7 @@
             <a class="ghost-btn" href="/logs" style="text-decoration:none;"><i data-lucide="scroll-text"></i> Журнал действий</a>
             <a class="ghost-btn" href="/plans-db" style="text-decoration:none;"><i data-lucide="database"></i> База планов</a>
             <a class="ghost-btn" href="/" style="text-decoration:none;"><i data-lucide="user"></i> Страница сотрудника</a>
-            <button class="ghost-btn" onclick="openNotifyTester()"><i data-lucide="bell"></i> Тест уведомлений</button>
+            <a class="ghost-btn" href="/notify-test" style="text-decoration:none;"><i data-lucide="bell"></i> Тест уведомлений</a>
             <button class="ghost-btn" onclick="openPasswordDialog()"><i data-lucide="key-round"></i> Сменить пароль</button>
             <button class="ghost-btn" onclick="logout()"><i data-lucide="log-out"></i> Выйти</button>
         </div>
@@ -274,24 +274,6 @@
         <div style="display:flex;gap:10px;">
             <button class="primary-btn" style="flex:1;padding:9px;" onclick="submitPasswordChange()">Сменить</button>
             <button class="ghost-btn" onclick="document.getElementById('password-dialog').close()">Отмена</button>
-        </div>
-    </dialog>
-
-    <dialog id="notify-tester-dialog" style="max-width:640px;width:94vw;">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
-            <h3 style="margin:0;"><i data-lucide="bell"></i> Тестировщик уведомлений</h3>
-            <button class="ghost-btn" onclick="document.getElementById('notify-tester-dialog').close()">Закрыть</button>
-        </div>
-        <div class="stage-hint" style="margin-top:8px;">Кладёт сообщения в инбокс выбранного пользователя. Он увидит их очередью (по одному, с задержкой) на своей странице. Выберите себя — чтобы посмотреть уведомления прямо здесь.</div>
-        <label style="display:block;font-size:13px;color:#475569;margin:12px 0 4px;">Кому</label>
-        <select id="nt-user" style="width:100%;padding:9px 11px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;"></select>
-        <div id="nt-messages" style="margin-top:14px;display:flex;flex-direction:column;gap:10px;"></div>
-        <button class="ghost-btn" style="margin-top:10px;" onclick="ntAddMessage()"><i data-lucide="plus"></i> Добавить сообщение</button>
-        <div class="error" id="nt-error" style="display:none;margin-top:12px;"></div>
-        <div id="nt-result" style="display:none;margin-top:12px;color:#166534;background:#f0fdf4;border-radius:8px;padding:10px 12px;font-size:14px;"></div>
-        <div style="display:flex;gap:10px;margin-top:16px;">
-            <button class="primary-btn" id="nt-send" style="flex:1;padding:9px;" onclick="ntSend()">Отправить</button>
-            <button class="ghost-btn" onclick="document.getElementById('notify-tester-dialog').close()">Отмена</button>
         </div>
     </dialog>
 

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Тест уведомлений — НейроМастер</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--bg:#f5f7fa;--surface:#fff;--ink:#1e293b;--muted:#64748b;--line:#e2e8f0;--line2:#cbd5e1;
+  --accent:#3b82f6;--accent-ink:#2563eb;--ok:#166534;--ok-bg:#f0fdf4;--err:#dc2626;--err-bg:#fee2e2;--warn:#92400e;--warn-bg:#fef3c7;}
+@media(prefers-color-scheme:dark){:root{--bg:#0c1119;--surface:#151d29;--ink:#e7ecf4;--muted:#9aa5b4;--line:#232f40;--line2:#2f3d52;
+  --accent:#6f97f5;--accent-ink:#9db8fa;--ok:#57c489;--ok-bg:#123023;--err:#e5675d;--err-bg:#331d1a;--warn:#d6a955;--warn-bg:#2c2410;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.5}
+.shell{max-width:720px;margin:28px auto;padding:0 18px 80px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:14px;border-bottom:2px solid var(--accent);padding-bottom:12px}
+h1{font-size:22px;margin:0}
+.btn{border:1px solid var(--line2);background:var(--surface);border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;color:var(--muted);cursor:pointer;text-decoration:none}
+.btn:hover{color:var(--ink)}
+.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.primary:hover{background:var(--accent-ink);color:#fff}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:18px}
+.card h2{font-size:15px;margin:0 0 12px}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+select,input,textarea{width:100%;padding:9px 11px;border:1px solid var(--line2);border-radius:8px;font:inherit;background:var(--surface);color:var(--ink)}
+textarea{resize:vertical}
+.nt-row{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+.nt-row .rm{text-align:right;margin-top:8px}
+.hint{color:var(--muted);font-size:13px}
+.pill{display:inline-block;padding:.2em .7em;border-radius:999px;font-size:12px;font-weight:700}
+.pill.on{background:var(--ok-bg);color:var(--ok)}
+.pill.off{background:var(--warn-bg);color:var(--warn)}
+.pill.no{background:var(--err-bg);color:var(--err)}
+.msg{margin-top:12px;padding:10px 12px;border-radius:8px;font-size:14px}
+.msg.ok{background:var(--ok-bg);color:var(--ok)}
+.msg.err{background:var(--err-bg);color:var(--err)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+</style>
+</head>
+<body class="app-page">
+<div class="shell">
+  <div class="top">
+    <h1><i data-lucide="bell"></i> Тест уведомлений</h1>
+    <a class="btn" href="/admin"><i data-lucide="arrow-left"></i> Админка</a>
+  </div>
+
+  <div class="card">
+    <h2>Браузерные уведомления</h2>
+    <div class="row">
+      <span>Статус разрешения: <span id="perm" class="pill off">…</span></span>
+      <button class="btn" onclick="askPerm()"><i data-lucide="bell-ring"></i> Разрешить</button>
+    </div>
+    <div class="hint" style="margin-top:8px;">Без разрешения всплывашки в углу страницы всё равно работают — не работает только системное уведомление ОС.</div>
+  </div>
+
+  <div class="card">
+    <h2>Отправка</h2>
+    <label>Кому</label>
+    <select id="nt-user"><option>Загрузка…</option></select>
+    <div class="hint" style="margin-top:6px;">Выбери <b>себя</b> — уведомления всплывут прямо здесь. Выберешь другого — увидит очередь на своей странице.</div>
+
+    <div id="nt-messages" style="margin-top:14px;"></div>
+    <button class="btn" onclick="addMessage()"><i data-lucide="plus"></i> Добавить сообщение</button>
+
+    <div id="nt-msg"></div>
+    <div class="row" style="margin-top:16px;">
+      <button class="primary btn" id="nt-send" onclick="send()"><i data-lucide="send-horizontal"></i> Отправить</button>
+      <button class="btn" onclick="fillDemo()">Заполнить примером (3 шт.)</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/notify.js"></script>
+<script>
+let ME = null;
+
+function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
+function api(u,o){return fetch(u,o).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
+
+// ---- разрешение ----
+function renderPerm(){
+  const el=document.getElementById('perm');
+  if(!('Notification'in window)){el.className='pill no';el.textContent='не поддерживается';return;}
+  const p=Notification.permission;
+  el.className='pill '+(p==='granted'?'on':p==='denied'?'no':'off');
+  el.textContent=p==='granted'?'разрешено':p==='denied'?'запрещено':'не задано';
+}
+function askPerm(){
+  if(!('Notification'in window))return;
+  Notification.requestPermission().then(renderPerm);
+}
+
+// ---- строки сообщений ----
+function rowHtml(t,b){
+  return `<div class="nt-row">
+    <input class="nt-title" placeholder="Заголовок (необязательно)" value="${esc(t||'')}">
+    <textarea class="nt-body" rows="2" placeholder="Текст сообщения">${esc(b||'')}</textarea>
+    <div class="rm"><button class="btn" style="padding:4px 10px;font-size:13px;" onclick="this.closest('.nt-row').remove()">Удалить</button></div>
+  </div>`;
+}
+function addMessage(t,b){
+  document.getElementById('nt-messages').insertAdjacentHTML('beforeend',rowHtml(t,b));
+  refreshIcons();
+}
+function fillDemo(){
+  const box=document.getElementById('nt-messages');box.innerHTML='';
+  addMessage('Добро пожаловать','Первый рабочий день — знакомство с командой в 10:00.');
+  addMessage('Охрана труда','Пройди вводный инструктаж и распишись в журнале.');
+  addMessage('Пропуск','Забери пропуск на ресепшене до конца дня.');
+}
+
+// ---- отправка ----
+function send(){
+  const box=document.getElementById('nt-msg');box.innerHTML='';
+  const userId=document.getElementById('nt-user').value;
+  const messages=[...document.querySelectorAll('#nt-messages .nt-row')].map(r=>({
+    title:r.querySelector('.nt-title').value.trim(),
+    body:r.querySelector('.nt-body').value.trim(),
+  })).filter(m=>m.title||m.body);
+  if(!userId){box.innerHTML='<div class="msg err">Выбери пользователя.</div>';return;}
+  if(!messages.length){box.innerHTML='<div class="msg err">Добавь хотя бы одно сообщение.</div>';return;}
+  const btn=document.getElementById('nt-send');btn.disabled=true;
+  api(`/users/${encodeURIComponent(userId)}/notify-test`,{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages}),
+  }).then(r=>r.json().then(d=>({ok:r.ok,d}))).then(({ok,d})=>{
+    btn.disabled=false;
+    if(!ok){box.innerHTML=`<div class="msg err">${esc(d.detail||'Не удалось отправить')}</div>`;return;}
+    const self=ME&&userId===ME.id;
+    box.innerHTML=`<div class="msg ok">Отправлено ${d.sent} для «${esc(d.target)}». Непрочитано у него: ${d.unread}.${self?' Сейчас всплывёт здесь ↗':''}</div>`;
+    if(self&&window.nmPollNow)window.nmPollNow();  // мгновенно показать очередь себе
+  }).catch(()=>{btn.disabled=false;box.innerHTML='<div class="msg err">Ошибка сети.</div>';});
+}
+
+// ---- инициализация ----
+renderPerm();
+askPerm();  // спросим сразу; если откажут — кнопка «Разрешить» остаётся
+addMessage();
+Promise.all([
+  api('/api/me').then(r=>r.json()).catch(()=>({})),
+  api('/users').then(r=>r.json()).catch(()=>({users:[]})),
+]).then(([me,d])=>{
+  ME=me;
+  const list=(d.users||[]).filter(u=>u.has_account);
+  const sel=document.getElementById('nt-user');
+  sel.innerHTML=list.map(u=>`<option value="${esc(u.id)}">${esc(u.full_name||u.username)}${u.id===(me&&me.id)?' — это я':''} · ${esc(u.role||'employee')}</option>`).join('')
+    || '<option value="">Нет пользователей с аккаунтом</option>';
+  if(me&&me.id)sel.value=me.id;
+});
+</script>
+
+<script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+<script>
+function refreshIcons(){if(window.lucide)lucide.createIcons({attrs:{'stroke-width':1.5,width:18,height:18}});}
+window.addEventListener('load',refreshIcons);
+</script>
+</body>
+</html>

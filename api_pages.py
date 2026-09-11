@@ -84,6 +84,12 @@ async def plans_db_page(request: Request):
     return page_for_admin(request, "plans_db.html")
 
 
+@router.get("/notify-test", response_class=HTMLResponse)
+async def notify_test_page(request: Request):
+    """Тестировщик уведомлений: отправка сообщений пользователю и предпросмотр очереди."""
+    return page_for_admin(request, "notify_test.html")
+
+
 @router.get("/doc-breakdown", response_class=HTMLResponse)
 async def doc_breakdown_page(request: Request):
     """Страница просмотра разбора документа (блоки → чанки, метки, обоснования)."""
