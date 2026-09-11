@@ -168,6 +168,23 @@ def unread_count(employee_id: str) -> int:
     return r["n"] if r else 0
 
 
+def push_test(employee_id: str, title: str = "", body: str = "") -> str:
+    """Кладёт тестовое сообщение сразу как delivered — для ручной проверки уведомлений
+    из админки. Возвращает id созданной строки."""
+    import uuid
+    mid = f"test-{uuid.uuid4().hex[:8]}"
+    row_id = f"{employee_id}:{mid}"
+    db.execute(
+        "INSERT INTO scheduled_messages "
+        "(id, employee_id, message_id, title, body, send_at, status, delivered_at) "
+        "VALUES (%s, %s, %s, %s, %s, now(), 'delivered', now())",
+        (row_id, employee_id, mid,
+         title or "Тестовое уведомление",
+         body or "Проверка системы уведомлений НейроМастер."),
+    )
+    return row_id
+
+
 def mark_read(employee_id: str, message_row_id: str) -> bool:
     rows = db.query(
         "UPDATE scheduled_messages SET status = 'read', read_at = now(), updated_at = now() "

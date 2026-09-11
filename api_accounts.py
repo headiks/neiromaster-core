@@ -37,6 +37,11 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
 
 
+class TestNotification(BaseModel):
+    title: str | None = None
+    body: str | None = None
+
+
 # ---------- Вход, регистрация, свой профиль ----------
 @router.post("/api/login")
 async def api_login(req: LoginRequest, request: Request, response: Response):
@@ -145,3 +150,10 @@ async def api_mark_message_read(message_id: str, user: dict = Depends(require_se
     if not messaging.mark_read(user["id"], message_id):
         raise HTTPException(status_code=404, detail="Сообщение не найдено или уже прочитано")
     return {"read": True}
+
+
+@router.post("/api/my/messages/test", dependencies=logged_in)
+async def api_test_notification(req: TestNotification, user: dict = Depends(require_setup_done)):
+    """Ручная отправка тестового уведомления себе — для проверки очереди и всплывашек."""
+    row_id = messaging.push_test(user["id"], (req.title or "").strip(), (req.body or "").strip())
+    return {"ok": True, "id": row_id}
