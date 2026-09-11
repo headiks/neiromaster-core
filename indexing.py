@@ -148,6 +148,65 @@ def extract_page_no(chunk) -> Optional[int]:
 
 
 # ---------- Конвертация с кэшированием ----------
+def _detect_rotated_pages(path: Path) -> dict:
+    """{индекс_страницы: угол_текста°} для страниц, где текст нарисован боком
+    (ландшафтные таблицы без флага /Rotate). Угол — из pdfium (FPDFText_GetCharAngle,
+    против часовой). Ровные страницы (0°) в результат не попадают."""
+    import math
+    import statistics
+    import pypdfium2 as pdfium
+    import pypdfium2.raw as pdfium_c
+    out = {}
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        for i in range(len(pdf)):
+            tp = pdf[i].get_textpage()
+            try:
+                n = tp.count_chars()
+                if n < 20:          # мало текста — угол ненадёжен, пропускаем
+                    continue
+                step = max(1, n // 200)   # выборка символов, не весь текст
+                angs = [pdfium_c.FPDFText_GetCharAngle(tp.raw, k) for k in range(0, n, step)]
+                angs = [a for a in angs if a is not None and a >= 0]
+                if not angs:
+                    continue
+                deg = round(math.degrees(statistics.median(angs))) % 360
+                if deg in (90, 270):
+                    out[i] = deg
+            finally:
+                tp.close()
+    finally:
+        pdf.close()
+    return out
+
+
+def _normalize_rotation(filepath: Path):
+    """Разворачивает страницы с боком-нарисованным текстом, чтобы docling читал их
+    правильно (иначе таблица приходит перемешанной). Возвращает (путь_для_docling,
+    временный_ли_файл). Не-PDF и любой сбой -> исходный файл (индексацию не роняем)."""
+    if filepath.suffix.lower() != ".pdf":
+        return filepath, False
+    try:
+        rotated = _detect_rotated_pages(filepath)
+        if not rotated:
+            return filepath, False
+        from pypdf import PdfReader, PdfWriter
+        reader = PdfReader(str(filepath))
+        writer = PdfWriter()
+        for i, page in enumerate(reader.pages):
+            if i in rotated:
+                page.rotate((360 - rotated[i]) % 360)   # компенсируем угол текста
+            writer.add_page(page)
+        tmp = CACHE_DIR / f"{filepath.stem}__norot_{file_hash(filepath)}.pdf"
+        with open(tmp, "wb") as f:
+            writer.write(f)
+        print(f"[index] {filepath.name}: развёрнуто повёрнутых страниц: {len(rotated)}")
+        return tmp, True
+    except Exception as e:
+        print(f"[index] нормализация поворота не удалась ({filepath.name}): {e}")
+        return filepath, False
+
+
 def convert_document(filepath: Path) -> DoclingDocument:
     """
     Гоняем файл через docling. Разбор PDF/DOCX (особенно PDF с layout-моделью)
@@ -162,7 +221,16 @@ def convert_document(filepath: Path) -> DoclingDocument:
     if cache_path.exists():
         return DoclingDocument.load_from_json(str(cache_path))
 
-    result = converter.convert(str(filepath))
+    # Повёрнутые страницы (боком-нарисованные таблицы) выправляем до docling.
+    src, is_tmp = _normalize_rotation(filepath)
+    try:
+        result = converter.convert(str(src))
+    finally:
+        if is_tmp:
+            try:
+                src.unlink()
+            except OSError:
+                pass
     doc = result.document
     doc.save_as_json(str(cache_path))
     return doc
