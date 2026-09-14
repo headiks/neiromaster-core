@@ -178,10 +178,15 @@
         // Живая сводка над списком: какой документ сейчас обрабатывается и сколько в очереди.
         function renderProcSummary(docs) {
             const el = document.getElementById('doc-proc-summary');
+            const overall = document.getElementById('doc-overall');
             if (!el) return;
             const active = docs.filter(d => d.status === 'processing' || d.status === 'reanalyzing');
             const queued = docs.filter(d => d.status === 'uploaded');
-            if (!active.length && !queued.length) { el.style.display = 'none'; return; }
+            if (!active.length && !queued.length) {
+                el.style.display = 'none';
+                if (overall) overall.style.display = 'none';
+                return;
+            }
             const parts = [];
             if (active.length) {
                 const names = active.map(d => escapeHtml(d.filename)).join(', ');
@@ -190,6 +195,20 @@
             if (queued.length) parts.push(`<span style="color:#475569;">в очереди: ${queued.length}</span>`);
             el.innerHTML = parts.join(' · ');
             el.style.display = 'block';
+
+            // Общий прогресс: доля завершённых документов + дробный вклад активных по их %.
+            if (overall) {
+                const total = docs.length || 1;
+                const doneUnits = docs.filter(d => d.status === 'indexed' || d.status === 'error').length
+                    + active.reduce((a, d) => a + (Number(d.progress) || 0) / 100, 0);
+                const pct = Math.max(0, Math.min(100, Math.round(doneUnits / total * 100)));
+                const doneN = docs.filter(d => d.status === 'indexed').length;
+                document.getElementById('doc-overall-label').textContent =
+                    `Анализ базы: готово ${doneN} из ${docs.length}${queued.length ? ` · в очереди ${queued.length}` : ''}`;
+                document.getElementById('doc-overall-pct').textContent = pct + '%';
+                document.getElementById('doc-overall-fill').style.width = pct + '%';
+                overall.style.display = 'block';
+            }
         }
 
         function statusLabel(status) {
@@ -215,7 +234,9 @@
             return api('/documents').then(r => r.json()).then(d => {
                 const docs = d.documents || [];
                 docsCache = docs;
-                anyReanalyzing = docs.some(doc => doc.status === 'reanalyzing');
+                // быстрый опрос, пока есть любой активный статус (не только reanalyzing)
+                anyReanalyzing = docs.some(doc =>
+                    doc.status === 'reanalyzing' || doc.status === 'processing' || doc.status === 'uploaded');
                 renderDocuments(docs);
                 renderProcSummary(docs);
                 reconcilePending(docs);
@@ -532,6 +553,32 @@
             refreshIcons();
         }
 
+        // Прогресс-бар одного документа. Активные фазы (processing/reanalyzing) — реальный
+        // % из реестра (backend пишет phase/progress по ходу docling→чанки→эмбеддинги).
+        // uploaded — «в очереди» бегущей полосой; error — красная; indexed — без бара.
+        function docProgress(doc) {
+            const s = doc.status;
+            if (s === 'indexed') return '';
+            if (s === 'error') {
+                return `<div class="doc-prog"><div class="pbar"><div class="pbar-fill error" style="width:100%"></div></div></div>`;
+            }
+            if (s === 'uploaded') {
+                return `<div class="doc-prog"><div class="doc-prog-line"><span>В очереди на обработку</span></div>`
+                     + `<div class="pbar"><div class="pbar-fill indet"></div></div></div>`;
+            }
+            if (s === 'processing' || s === 'reanalyzing') {
+                const pct = Number(doc.progress);
+                const phase = doc.phase || statusLabel(s);
+                if (Number.isFinite(pct) && pct > 0) {
+                    return `<div class="doc-prog"><div class="doc-prog-line"><span>${escapeHtml(phase)}</span><span>${pct}%</span></div>`
+                         + `<div class="pbar"><div class="pbar-fill" style="width:${Math.min(100, pct)}%"></div></div></div>`;
+                }
+                return `<div class="doc-prog"><div class="doc-prog-line"><span>${escapeHtml(phase)}</span></div>`
+                     + `<div class="pbar"><div class="pbar-fill indet"></div></div></div>`;
+            }
+            return '';
+        }
+
         function docFormat(doc) {
             // Формат — из mime (реестр метаданных) или, если его нет, из расширения имени файла.
             const raw = (doc.mime || (doc.filename || '').split('.').pop() || '').toLowerCase();
@@ -576,9 +623,11 @@
                             <span class="status-badge ${doc.status}">${statusLabel(doc.status)}</span>
                             ${doc.chunks ? `<button class="icon-btn" title="Подробнее" onclick="showDocDetail('${escapeHtml(doc.filename)}')"><i data-lucide="search"></i></button>` : ''}
                             ${doc.chunks ? `<button class="icon-btn" title="Переанализировать" onclick="reanalyzeDoc('${escapeHtml(doc.filename)}')"><i data-lucide="refresh-cw"></i></button>` : ''}
+                            ${(doc.status === 'error' || doc.status === 'uploaded') ? `<button class="icon-btn" title="Переиндексировать заново (полный разбор)" onclick="reprocessDoc('${escapeHtml(doc.filename)}')"><i data-lucide="rotate-ccw"></i></button>` : ''}
                             <button class="del-btn" onclick="deleteDocument('${escapeHtml(doc.filename)}')">Удалить</button>
                         </div>
                       </div>
+                      ${docProgress(doc)}
                       ${similarLine}
                       ${similar.length ? `<div style="display:flex;gap:8px;margin-top:8px;">
                             <input type="text" id="clar-${escapeHtml(doc.filename)}" placeholder="Уточнение для ассистента (напр.: старый документ неактуален)" style="flex:1;">
@@ -602,6 +651,12 @@
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ clarification: val.trim() })
             }).then(() => loadDocuments());
+        }
+
+        function reprocessDoc(filename) {
+            api('/documents/' + encodeURIComponent(filename) + '/reprocess', { method: 'POST' })
+                .then(() => { pendingDocs.add(filename); bumpDocPolling(); })
+                .catch(err => alert('Не удалось переиндексировать: ' + err.message));
         }
 
         function reanalyzeAll() {

@@ -276,7 +276,21 @@ def index_document(filepath: Path) -> dict:
     базу «Все документы» (вся коллекция) независимо от того, отнеслись ли они к папкам.
     """
     filename = filepath.name
-    _update_registry(filename, status="processing", error=None)
+    _update_registry(filename, status="processing", error=None,
+                     phase="Разбор документа (docling)", progress=5)
+
+    # Троттлинг записи прогресса в реестр (файл под блокировкой) — не чаще раза в секунду,
+    # финальные значения (progress=100 / смена фазы) пишем всегда.
+    _last_prog = [0.0]
+    def _report(progress: int, phase: str | None = None):
+        now = time.time()
+        if phase is None and progress < 100 and now - _last_prog[0] < 1.0:
+            return
+        _last_prog[0] = now
+        fields = {"progress": int(progress)}
+        if phase is not None:
+            fields["phase"] = phase
+        _update_registry(filename, **fields)
 
     try:
         start = time.time()
@@ -284,6 +298,7 @@ def index_document(filepath: Path) -> dict:
         markdown_text = doc.export_to_markdown()
 
         # ---- Краткое смысловое описание документа ----
+        _report(20, "Классификация документа")
         summary = classify.summarize_document(markdown_text, filename)
         uploaded_at = _load_registry().get(filename, {}).get("uploaded_at") or time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -314,6 +329,7 @@ def index_document(filepath: Path) -> dict:
         )
 
         # ---- Чанкинг ----
+        _report(30, "Разбиение на фрагменты")
         chunks = list(chunker.chunk(doc))
         if not chunks:
             _update_registry(filename, status="error", error="Не удалось выделить ни одного чанка")
@@ -321,12 +337,15 @@ def index_document(filepath: Path) -> dict:
 
         delete_document_vectors(filename)  # переиндексация: сносим прежние чанки
 
+        _report(35, "Индексация фрагментов (эмбеддинги)")
+        total_chunks = len(chunks)
         src_hash = file_hash(filepath)
         points = []
         seg_index = 0
         section_counters = {}   # раздел -> счётчик чанков внутри него (для стабильного ID)
         prev_tail = ""   # хвост предыдущего чанка для перекрытия контекста (ТЗ §12)
-        for chunk in chunks:
+        for chunk_i, chunk in enumerate(chunks):
+            _report(35 + int(60 * chunk_i / total_chunks))   # 35..95 по ходу эмбеддингов
             headings = list(getattr(chunk.meta, "headings", None) or [])
             page_no = extract_page_no(chunk)
 
@@ -403,6 +422,7 @@ def index_document(filepath: Path) -> dict:
             indexed_in_seconds=round(elapsed, 2), folders=doc_folders,
             stage_ids=doc_cls["stage_ids"], profession=doc_profession,
             path=filename, markdown_path=md_path.name,
+            phase=None, progress=100,
         )
         # Единый реестр метаданных в PostgreSQL (дедуп по хэшу + экран «этапы↔документы»).
         # Сбой реестра не должен ронять индексацию — документ уже в Qdrant и в registry.json.
@@ -849,9 +869,22 @@ def reanalyze_document(filename: str) -> dict:
 
     Статус в реестре ведём по ходу дела (reanalyzing -> indexed/error), чтобы он был
     виден в списке документов рядом с каждым документом при переанализе."""
-    _update_registry(filename, status="reanalyzing", error=None)
+    _update_registry(filename, status="reanalyzing", error=None,
+                     phase="Переанализ (классификация фрагментов)", progress=5)
     try:
         entry = docregistry.get(filename)
+        try:
+            total_pts = client.count(collection_name=COLLECTION_NAME,
+                count_filter=Filter(must=[FieldCondition(key="source", match=MatchValue(value=filename))])).count or 0
+        except Exception:
+            total_pts = 0
+        _last_prog = [0.0]
+        def _report(progress: int):
+            now = time.time()
+            if progress < 100 and now - _last_prog[0] < 1.0:
+                return
+            _last_prog[0] = now
+            _update_registry(filename, progress=int(progress))
         summary = (entry or {}).get("summary") or ""
         # Полный текст для сигнатур уровня A (если сохранённый markdown доступен).
         full_text = ""
@@ -895,11 +928,14 @@ def reanalyze_document(filename: str) -> dict:
                                             "plan_stages": plan_stages, "plan_substages": plan_substages},
                                    points=[p.id])
                 touched += 1
+                if total_pts:
+                    _report(5 + int(90 * touched / total_pts))   # 5..95
             if offset is None:
                 break
         _update_registry(filename, folders=doc_folders, stage_ids=doc_cls["stage_ids"],
                          folder_reasons=doc_cls.get("decisions") or [],
-                         profession=doc_profession, status="indexed", error=None)
+                         profession=doc_profession, status="indexed", error=None,
+                         phase=None, progress=100)
         # Синхронизируем доску «этапы ↔ документы» (document_meta) ЗДЕСЬ, а не в веб-слое:
         # так и синхронный /reindex, и фоновый /reanalyze обновляют её одинаково — общие
         # поля folders/stage_ids не разъезжаются между реестром и метаданными.

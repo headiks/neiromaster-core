@@ -316,6 +316,19 @@ def reanalyze_one(filename: str, user: dict = Depends(require_admin)):
     return {"started": True}
 
 
+@router.post("/documents/{filename}/reprocess")
+def reprocess_one(filename: str, user: dict = Depends(require_admin)):
+    """Полный повторный разбор документа с нуля (docling → чанки → эмбеддинги) — для
+    файлов со статусом error/uploaded, которым обычный переанализ не помогает (чанков
+    в Qdrant ещё/уже нет). Ставит файл в фоновую очередь индексации."""
+    ensure_doc_access(user, filename)
+    fp = indexing.DOCS_DIR / filename
+    if not fp.exists():
+        raise HTTPException(status_code=404, detail="Файл-оригинал не найден в хранилище")
+    job = indexing.enqueue_document(fp)
+    return {"status": "queued", "job": job}
+
+
 @router.post("/documents/{filename}/clarify")
 async def clarify_document(filename: str, req: ClarifyRequest,
                            user: dict = Depends(require_admin)):

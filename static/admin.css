@@ -126,6 +126,22 @@
         .status-badge.active { background: #bbf7d0; color: #14532d; }
         .status-badge.done { background: #e2e8f0; color: #475569; }
         .status-badge.paused { background: #fde68a; color: #78350f; }
+        /* Прогресс-бары анализа документов */
+        .pbar { height: 8px; border-radius: 6px; background: #e2e8f0; overflow: hidden; }
+        .pbar-fill { height: 100%; width: 0; border-radius: 6px; background: #f59e0b;
+            transition: width .4s ease; }
+        .pbar-fill.indexed { background: #22c55e; }
+        .pbar-fill.error { background: #ef4444; }
+        /* фаза без числового прогресса (uploaded/старт) — бегущая полоса */
+        .pbar-fill.indet { width: 35% !important; background: #f59e0b;
+            animation: pbarIndet 1.2s ease-in-out infinite; }
+        @keyframes pbarIndet { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+        .doc-prog { margin-top: 8px; }
+        .doc-prog-line { display: flex; justify-content: space-between; font-size: 12px;
+            color: #64748b; margin-bottom: 3px; }
+        .doc-overall { margin: 8px 0 12px; }
+        .doc-overall-head { display: flex; justify-content: space-between; font-size: 13px;
+            font-weight: 600; color: #475569; margin-bottom: 4px; }
         .folder-tag { background: #ede9fe; color: #5b21b6; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
         .del-btn {
             background: none;
