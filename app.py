@@ -116,6 +116,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Предупреждение: не удалось вернуть зависшие документы в очередь: {e}")
 
+    # То же для разметки docpipe (доска «этапы ↔ документы»): её очередь тоже в памяти
+    # процесса — задачи queued/running после рестарта надо возобновить, иначе документ
+    # не появляется на доске.
+    try:
+        import docpipe
+        docpipe.requeue_stranded()
+    except Exception as e:
+        print(f"Предупреждение: не удалось возобновить разметку docpipe: {e}")
+
     # Фоновый планировщик доставки сообщений плана по расписанию (инбокс сотрудника).
     # Отключается NEIROMASTER_SCHEDULER=0 (напр. когда доставку гоняют внешним cron).
     messaging.start_scheduler()

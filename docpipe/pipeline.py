@@ -327,10 +327,11 @@ def _worker():
     while True:
         task = _queue.get()
         filepath, filename, job_id = task["filepath"], task["filename"], task["job_id"]
+        force = task.get("force", False)
         attempt = 0
         while attempt < MAX_ATTEMPTS:
             try:
-                ingest(filepath, filename=filename, job_id=job_id)
+                ingest(filepath, filename=filename, job_id=job_id, force=force)
                 break
             except Exception as e:
                 attempt += 1
@@ -347,6 +348,34 @@ def _ensure_worker():
         if not _worker_started:
             threading.Thread(target=_worker, name="docpipe-worker", daemon=True).start()
             _worker_started = True
+
+
+def requeue_stranded() -> int:
+    """Возобновляет разметку docpipe, зависшую после рестарта: in-memory очередь
+    (_queue) теряется при перезапуске процесса, а задачи остаются в label_jobs в
+    статусе queued/running навсегда — документ не появляется на доске «этапы↔документы».
+    Берём последнюю задачу по каждому файлу; если она не done/error — ставим заново
+    (force=True: полный перепрогон, идемпотентно по content_hash)."""
+    import db
+    from config import DOCS_DIR
+    rows = db.query("SELECT DISTINCT ON (filename) filename, status FROM label_jobs "
+                    "ORDER BY filename, updated_at DESC")
+    n = 0
+    for r in rows or []:
+        if r.get("status") in ("done", "error"):
+            continue
+        fp = DOCS_DIR / r["filename"]
+        if not fp.exists():
+            print(f"[docpipe] возобновление пропущено — нет оригинала: {r['filename']}")
+            continue
+        _ensure_worker()
+        existing = store.find_by_hash(_hash_bytes(fp.read_bytes()))
+        job_id = store.create_job(existing["id"] if existing else None, r["filename"], total=0)
+        _queue.put({"filepath": str(fp), "filename": r["filename"], "job_id": job_id, "force": True})
+        n += 1
+    if n:
+        print(f"[docpipe] возвращено в очередь разметки зависших документов: {n}")
+    return n
 
 
 def enqueue(filepath, filename: str = None) -> str:
