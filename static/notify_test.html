@@ -79,6 +79,9 @@ let ME = null;
 
 function esc(s){const d=document.createElement('div');d.textContent=s==null?'':String(s);return d.innerHTML;}
 function api(u,o){return fetch(u,o).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
+// Должна существовать ДО первого addMessage() в инициализации (иконки lucide грузятся
+// отдельным скриптом ниже; тут просто безопасно перерисовываем, если библиотека уже есть).
+function refreshIcons(){if(window.lucide)lucide.createIcons({attrs:{'stroke-width':1.5,width:18,height:18}});}
 
 // ---- разрешение ----
 const SECURE = window.isSecureContext;   // HTTP -> браузер запрещает системные уведомления
@@ -160,9 +163,6 @@ Promise.all([
 </script>
 
 <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-<script>
-function refreshIcons(){if(window.lucide)lucide.createIcons({attrs:{'stroke-width':1.5,width:18,height:18}});}
-window.addEventListener('load',refreshIcons);
-</script>
+<script>window.addEventListener('load',refreshIcons);</script>
 </body>
 </html>
