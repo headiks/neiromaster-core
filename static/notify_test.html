@@ -47,9 +47,13 @@ textarea{resize:vertical}
     <h2>Браузерные уведомления</h2>
     <div class="row">
       <span>Статус разрешения: <span id="perm" class="pill off">…</span></span>
-      <button class="btn" onclick="askPerm()"><i data-lucide="bell-ring"></i> Разрешить</button>
+      <button class="btn" id="perm-ask" onclick="askPerm()"><i data-lucide="bell-ring"></i> Разрешить</button>
     </div>
-    <div class="hint" style="margin-top:8px;">Без разрешения всплывашки в углу страницы всё равно работают — не работает только системное уведомление ОС.</div>
+    <div id="perm-hint" class="hint" style="margin-top:8px;">Без разрешения всплывашки в углу страницы всё равно работают — не работает только системное уведомление ОС.</div>
+    <div id="insecure-note" class="msg err" style="display:none;margin-top:10px;">
+      Сайт открыт по <b>HTTP</b> — браузер запрещает системные уведомления (нужен HTTPS или localhost).
+      Поэтому кнопка «Разрешить» и уведомления ОС не работают. <b>Всплывашки на этой странице работают</b> — отправь себе и проверь очередь.
+    </div>
   </div>
 
   <div class="card">
@@ -77,15 +81,23 @@ function esc(s){const d=document.createElement('div');d.textContent=s==null?'':S
 function api(u,o){return fetch(u,o).then(r=>{if(r.status===401){location.href='/login';throw new Error('401');}return r;});}
 
 // ---- разрешение ----
+const SECURE = window.isSecureContext;   // HTTP -> браузер запрещает системные уведомления
 function renderPerm(){
   const el=document.getElementById('perm');
   if(!('Notification'in window)){el.className='pill no';el.textContent='не поддерживается';return;}
+  if(!SECURE){
+    el.className='pill no'; el.textContent='недоступно (нужен HTTPS)';
+    document.getElementById('insecure-note').style.display='block';
+    const ask=document.getElementById('perm-ask'); if(ask) ask.disabled=true;
+    const hint=document.getElementById('perm-hint'); if(hint) hint.style.display='none';
+    return;
+  }
   const p=Notification.permission;
   el.className='pill '+(p==='granted'?'on':p==='denied'?'no':'off');
   el.textContent=p==='granted'?'разрешено':p==='denied'?'запрещено':'не задано';
 }
 function askPerm(){
-  if(!('Notification'in window))return;
+  if(!('Notification'in window)||!SECURE)return;
   Notification.requestPermission().then(renderPerm);
 }
 
