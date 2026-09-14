@@ -360,9 +360,14 @@ def requeue_stranded() -> int:
     from config import DOCS_DIR
     rows = db.query("SELECT DISTINCT ON (filename) filename, status FROM label_jobs "
                     "ORDER BY filename, updated_at DESC")
+    # Файлы, у которых уже была успешная разметка: их не переразмечаем, даже если позже
+    # осталась висящая queued-строка (повторная постановка при загрузке, которая не
+    # выполнилась) — иначе каждый рестарт впустую гоняет LLM по готовым документам.
+    done_files = {r["filename"] for r in
+                  db.query("SELECT DISTINCT filename FROM label_jobs WHERE status = 'done'") or []}
     n = 0
     for r in rows or []:
-        if r.get("status") in ("done", "error"):
+        if r.get("status") in ("done", "error") or r["filename"] in done_files:
             continue
         fp = DOCS_DIR / r["filename"]
         if not fp.exists():
