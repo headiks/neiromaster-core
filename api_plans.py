@@ -132,6 +132,23 @@ async def generate_plan(plan_id: str, profession: str | None = None):
     return planner.start_generation(plan, positions=_staffing_positions())
 
 
+@router.post("/plans/{plan_id}/generate-missing", dependencies=admin_only)
+async def generate_missing(plan_id: str, profession: str | None = None):
+    """Догенерация: заново прогоняет только пропущенные/ошибочные подэтапы (после того как
+    админ загрузил недостающие документы), уже готовые тексты не трогает. profession как в
+    /generate: задан — одно расписание; без него — под каждую должность плюс общее."""
+    plan = planner.load_plan(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="План не найден")
+    if not any(s.get("substages") for s in plan.get("stages") or []):
+        raise HTTPException(status_code=400, detail="В плане нет ни одного подэтапа")
+    if profession is not None:
+        prof = profession.strip()
+        return planner.start_generation(plan, positions=[prof] if prof else None,
+                                        include_general=not prof, only_missing=True)
+    return planner.start_generation(plan, positions=_staffing_positions(), only_missing=True)
+
+
 @router.post("/plans/{plan_id}/rollout")
 async def rollout_plan(plan_id: str, user: dict = Depends(require_admin)):
     """Применить готовый план ко всем сотрудникам: назначить план каждому сотруднику и

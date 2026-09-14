@@ -328,7 +328,12 @@
                         const subs = st.subs.map(m => {
                             const txt = ((m.content || {}).text || '').trim();
                             const kind = (m.substage || {}).kind || '';
-                            const st2 = m.status && m.status !== 'generated' ? ` <span class="pt-status">${escapeHtml(m.status)}</span>` : '';
+                            const stLabels = { skipped: 'пропущено — нет документа', error: 'ошибка', edited: 'правка вручную', pending: 'в очереди' };
+                            const st2 = m.status && m.status !== 'generated'
+                                ? ` <span class="pt-status pt-status-${escapeHtml(m.status)}">${escapeHtml(stLabels[m.status] || m.status)}</span>` : '';
+                            // Причина для пропущенных/ошибочных — почему нет текста и что делать.
+                            const reason = (m.status === 'skipped' || m.status === 'error') && m.error
+                                ? `<div class="pt-reason" style="color:#92400e;font-size:13px;margin-top:4px;">${escapeHtml(m.error)}</div>` : '';
                             const srcNames = [...new Set((m.sources || []).map(s => typeof s === 'string' ? s : (s.source || s.filename || s.title || '')).filter(Boolean))];
                             const src = srcNames.length ? `<div class="pt-src">Источники: ${srcNames.map(escapeHtml).join(', ')}</div>` : '';
                             const mid = m.message_id || '';
@@ -339,6 +344,7 @@
                             return `<div class="pt-sub" data-mid="${escapeHtml(mid)}">
                                 <div class="pt-sub-h"><b>${escapeHtml((m.substage || {}).title || '')}</b>${kind ? ` <span class="pt-kind">${escapeHtml(kind)}</span>` : ''}${st2}</div>
                                 <div class="pt-text" data-raw="${encodeURIComponent(txt)}">${txt ? escapeHtml(txt) : '<span class="empty-hint">— текст пуст —</span>'}</div>
+                                ${reason}
                                 ${src}
                                 ${actions}
                             </div>`;
@@ -1281,6 +1287,7 @@
         function ptSetStatus(text) { document.getElementById('pt-status').textContent = text || ''; }
         function ptSetBusy(busy) {
             document.getElementById('pt-generate-btn').disabled = busy;
+            document.getElementById('pt-generate-missing-btn').disabled = busy;
             document.getElementById('pt-generate-all-btn').disabled = busy;
             document.getElementById('pt-cancel-btn').style.display = busy ? '' : 'none';
         }
@@ -1302,6 +1309,23 @@
                 .catch(err => { ptSetStatus(err.message); ptSetBusy(false); });
         }
 
+        // Догенерация: заново прогоняет ТОЛЬКО пропущенные/ошибочные подэтапы выбранного
+        // расписания (после загрузки недостающих документов). Готовые тексты не трогаются.
+        function ptGenerateMissing() {
+            const pid = document.getElementById('pt-plan').value;
+            if (!pid) { ptSetStatus('Выберите план.'); return; }
+            const prof = document.getElementById('pt-prof').value || '';
+            ptSetBusy(true);
+            ptSetStatus('Догенерация недостающих…');
+            apiJson(`/plans/${encodeURIComponent(pid)}/generate-missing?profession=${encodeURIComponent(prof)}`, { method: 'POST' })
+                .then(({ ok, data }) => {
+                    if (!ok) { ptSetStatus(data.detail || 'Не удалось запустить догенерацию'); ptSetBusy(false); return; }
+                    currentGenJob = data.job_id;
+                    ptPollJob(data.job_id, () => { renderPlanTexts(); loadPlanTexts(); });
+                })
+                .catch(err => { ptSetStatus(err.message); ptSetBusy(false); });
+        }
+
         function ptPollJob(jobId, onDone) {
             const wrap = document.getElementById('pt-progress-wrap');
             const fill = document.getElementById('pt-progress-fill');
@@ -1312,14 +1336,16 @@
                 api(`/jobs/${encodeURIComponent(jobId)}`).then(r => r.json()).then(job => {
                     const percent = job.total ? Math.round(100 * job.done / job.total) : 0;
                     fill.style.width = `${percent}%`;
+                    const extra = `${job.skipped ? ' · пропущено: ' + job.skipped : ''}${job.errors ? ' · ошибок: ' + job.errors : ''}`;
                     label.textContent = job.status === 'running'
-                        ? `Подэтап ${job.done} из ${job.total}${job.current ? ' · ' + job.current : ''}${job.errors ? ' · ошибок: ' + job.errors : ''}`
-                        : `Статус: ${job.status} · ${job.done} из ${job.total}${job.errors ? ' · ошибок: ' + job.errors : ''}`;
+                        ? `Подэтап ${job.done} из ${job.total}${job.current ? ' · ' + job.current : ''}${extra}`
+                        : `Статус: ${job.status} · ${job.done} из ${job.total}${extra}`;
                     if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
                         clearInterval(pollTimer);
                         currentGenJob = null;
                         ptSetBusy(false);
-                        ptSetStatus(job.status === 'done' ? 'Генерация завершена'
+                        const skippedNote = job.skipped ? ` · пропущено (нет документа): ${job.skipped} — загрузите документы и нажмите «Догенерировать недостающие»` : '';
+                        ptSetStatus(job.status === 'done' ? `Генерация завершена${skippedNote}`
                             : job.status === 'cancelled' ? 'Генерация отменена (сгенерированное сохранено)'
                             : (job.error || 'Ошибка'));
                         if (onDone) onDone();

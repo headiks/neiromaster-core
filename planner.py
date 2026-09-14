@@ -723,16 +723,54 @@ def pick_topics(stage: dict, substage: dict, topic_list: list) -> list:
     return picked or [t["slug"] for t in available]
 
 
-def generate_substage_message(stage: dict, substage: dict, topic_list: list, position: str = "") -> dict:
-    """Генерирует текст одного подэтапа. Ошибки не поднимает — возвращает status=error.
+def substages_with_docs(filenames=None) -> set:
+    """id подэтапов каталога, к которым по классификации docpipe («вкладка папки»)
+    отнесён хотя бы один документ (LLM-разметка блоков, не косинус). Пусто -> нет
+    привязок (генерировать нечего, всё пойдёт в «пропущено»)."""
+    try:
+        import docpipe
+        _, docs = docpipe.document_assignments(filenames=filenames)
+    except Exception as e:
+        print(f"[gen] привязка документов недоступна: {e}")
+        return set()
+    out = set()
+    for d in docs:
+        for s in d.get("substages") or []:
+            if s.get("substage_id"):
+                out.add(s["substage_id"])
+    return out
+
+
+NO_DOC_REASON = "Нет документа, отнесённого к этому подэтапу — загрузите документ и запустите догенерацию"
+
+
+def generate_substage_message(stage: dict, substage: dict, topic_list: list, position: str = "",
+                              docs_present: "set | None" = None, require_document: bool = True) -> dict:
+    """Генерирует текст одного подэтапа. Ошибки не поднимает — возвращает status.
     position — должность/профессия сотрудника (из аккаунта): чанки берутся из «папки подэтапа»
-    (разложенные по этому подэтапу), приоритет — чанкам этой профессии (буст по должности)."""
+    (разложенные по этому подэтапу), приоритет — чанкам этой профессии (буст по должности).
+
+    require_document (по умолчанию) — сначала проверяем по классификации docpipe, есть ли
+    вообще документ, отнесённый к этому подэтапу. Нет -> status='skipped', LLM не зовём:
+    без источника генерировать нечего, подэтап ждёт загрузки документа и догенерации.
+    docs_present — заранее посчитанное множество подэтапов-с-документами (для пакетной
+    генерации, чтобы не дёргать docpipe на каждый подэтап); None -> считаем на месте."""
     import indexing
     from rag import big_llm, parse_json_response
 
     result = {"topics_used": [], "sources": [], "status": "generated", "error": None,
               "content": {"format": "unified/1", "text": ""}}
     try:
+        if require_document:
+            present = docs_present if docs_present is not None else substages_with_docs()
+            # id подэтапа в классификации docpipe — составной: "<этап>.<подэтап>" (catalog_id).
+            stage_cat, sub_cat = stage.get("catalog_id"), substage.get("catalog_id")
+            key = f"{stage_cat}.{sub_cat}" if stage_cat and sub_cat else None
+            if not key or key not in present:
+                result["status"] = "skipped"
+                result["error"] = NO_DOC_REASON
+                return result
+
         picked = pick_topics(stage, substage, topic_list)
         result["topics_used"] = picked
 
@@ -743,8 +781,10 @@ def generate_substage_message(stage: dict, substage: dict, topic_list: list, pos
                               "page": c["page"], "score": round(c["score"], 3)} for c in chunks]
 
         if not chunks:
-            result["status"] = "error"
-            result["error"] = "В базе знаний не нашлось подходящих фрагментов"
+            # Документ отнесён (гейт пройден), но подходящих фрагментов нет -> тоже в
+            # «пропущено», чтобы догенерация подхватила после переиндексации/новых документов.
+            result["status"] = "skipped"
+            result["error"] = "Документ отнесён к подэтапу, но подходящих фрагментов не найдено"
             return result
 
         context = "\n\n".join(
@@ -846,12 +886,15 @@ def cancel_job(job_id: str) -> Optional[dict]:
         return dict(job)
 
 
-def start_generation(plan: dict, positions: Optional[list] = None, include_general: bool = True) -> dict:
+def start_generation(plan: dict, positions: Optional[list] = None, include_general: bool = True,
+                     only_missing: bool = False) -> dict:
     """Запускает генерацию плана в фоне. positions — список уникальных должностей (из штатки):
     под КАЖДУЮ генерируется своё расписание (чанки её профессии + общие), сотрудники этой
     должности берут готовое. Без positions — одно общее расписание (profession="").
     include_general=False — генерировать только перечисленные должности, без общего расписания
-    (для точечной перегенерации одной должности)."""
+    (для точечной перегенерации одной должности).
+    only_missing=True — ДОГЕНЕРАЦИЯ: уже готовые (generated/edited) подэтады не трогаем,
+    заново прогоняем только пропущенные/ошибочные (после загрузки недостающих документов)."""
     import folders
 
     # Уникальные должности + общее ("") как фолбэк для профессий без своего расписания.
@@ -868,23 +911,41 @@ def start_generation(plan: dict, positions: Optional[list] = None, include_gener
     items = resolve_schedule(plan)
     _set_job(job_id, plan_id=plan["plan_id"], status="queued", total=len(items) * len(profs), done=0,
              current=None, started_at=time.strftime("%Y-%m-%dT%H:%M:%S"), finished_at=None,
-             errors=0, error=None, professions=len(profs))
+             errors=0, skipped=0, error=None, professions=len(profs))
+
+    KEEP = ("generated", "edited")   # догенерация эти статусы не трогает
 
     def run():
         _set_job(job_id, status="running")
-        errors = 0
-        done = 0
+        errors = skipped = done = 0
         try:
             topic_list = folders.list_folders(include_disabled=False)
+            docs_present = substages_with_docs()   # какие подэтапы обеспечены документом
             stages_by_id = {s["id"]: s for s in plan.get("stages") or []}
             for prof in profs:
                 generated = {}
+                # Догенерация: подхватываем уже сохранённое расписание, чтобы не потерять готовое.
+                existing = {}
+                if only_missing:
+                    sch = load_schedule(plan["plan_id"], prof) or {}
+                    existing = {m.get("message_id"): m for m in (sch.get("messages") or [])}
                 label = prof or "общее"
                 cancelled = False
                 for item in items:
                     if (get_job(job_id) or {}).get("cancel"):   # запрошена отмена — стоп
                         cancelled = True
                         break
+                    mid = item["message_id"]
+                    prev = existing.get(mid)
+                    if only_missing and prev and prev.get("status") in KEEP:
+                        generated[mid] = {   # оставляем готовый текст как есть
+                            "content": prev.get("content", {}), "topics_used": prev.get("topics_used", []),
+                            "sources": prev.get("sources", []), "status": prev.get("status"),
+                            "error": prev.get("error"), "actions": prev.get("actions", []),
+                        }
+                        done += 1
+                        _set_job(job_id, done=done)
+                        continue
                     stage = stages_by_id.get(item["stage"]["id"], {})
                     substage = next(
                         (s for s in stage.get("substages", []) if s["id"] == item["substage"]["id"]),
@@ -892,12 +953,15 @@ def start_generation(plan: dict, positions: Optional[list] = None, include_gener
                     )
                     _set_job(job_id, current=f"[{label}] {item['stage']['title']} → {item['substage']['title']}",
                              done=done)
-                    payload = generate_substage_message(stage, substage, topic_list, position=prof)
+                    payload = generate_substage_message(stage, substage, topic_list, position=prof,
+                                                        docs_present=docs_present)
                     if payload["status"] == "error":
                         errors += 1
-                    generated[item["message_id"]] = payload
+                    elif payload["status"] == "skipped":
+                        skipped += 1
+                    generated[mid] = payload
                     done += 1
-                    _set_job(job_id, done=done, errors=errors)
+                    _set_job(job_id, done=done, errors=errors, skipped=skipped)
                 if generated:   # сохраняем, что успели (частичное расписание не теряем)
                     save_schedule(plan["plan_id"], build_schedule(plan, generated, profession=prof), profession=prof)
                 if cancelled:
