@@ -105,22 +105,26 @@ function askPerm(){
 }
 
 // ---- строки сообщений ----
-function rowHtml(t,b){
+function rowHtml(t,b,d){
   return `<div class="nt-row">
     <input class="nt-title" placeholder="Заголовок (необязательно)" value="${esc(t||'')}">
     <textarea class="nt-body" rows="2" placeholder="Текст сообщения">${esc(b||'')}</textarea>
+    <div class="row" style="margin-top:8px;">
+      <label style="margin:0;">Отправить через</label>
+      <input class="nt-delay" type="number" min="0" step="5" value="${d==null?0:d}" style="width:90px;"> <span class="hint">сек (0 — сразу)</span>
+    </div>
     <div class="rm"><button class="btn" style="padding:4px 10px;font-size:13px;" onclick="this.closest('.nt-row').remove()">Удалить</button></div>
   </div>`;
 }
-function addMessage(t,b){
-  document.getElementById('nt-messages').insertAdjacentHTML('beforeend',rowHtml(t,b));
+function addMessage(t,b,d){
+  document.getElementById('nt-messages').insertAdjacentHTML('beforeend',rowHtml(t,b,d));
   refreshIcons();
 }
 function fillDemo(){
   const box=document.getElementById('nt-messages');box.innerHTML='';
-  addMessage('Добро пожаловать','Первый рабочий день — знакомство с командой в 10:00.');
-  addMessage('Охрана труда','Пройди вводный инструктаж и распишись в журнале.');
-  addMessage('Пропуск','Забери пропуск на ресепшене до конца дня.');
+  addMessage('Добро пожаловать','Первый рабочий день — знакомство с командой в 10:00.',0);
+  addMessage('Охрана труда','Пройди вводный инструктаж и распишись в журнале.',60);
+  addMessage('Пропуск','Забери пропуск на ресепшене до конца дня.',120);
 }
 
 // ---- отправка ----
@@ -130,6 +134,7 @@ function send(){
   const messages=[...document.querySelectorAll('#nt-messages .nt-row')].map(r=>({
     title:r.querySelector('.nt-title').value.trim(),
     body:r.querySelector('.nt-body').value.trim(),
+    delay:Math.max(0,parseInt(r.querySelector('.nt-delay').value,10)||0),
   })).filter(m=>m.title||m.body);
   if(!userId){box.innerHTML='<div class="msg err">Выбери пользователя.</div>';return;}
   if(!messages.length){box.innerHTML='<div class="msg err">Добавь хотя бы одно сообщение.</div>';return;}
@@ -140,7 +145,8 @@ function send(){
     btn.disabled=false;
     if(!ok){box.innerHTML=`<div class="msg err">${esc(d.detail||'Не удалось отправить')}</div>`;return;}
     const self=ME&&userId===ME.id;
-    box.innerHTML=`<div class="msg ok">Отправлено ${d.sent} для «${esc(d.target)}». Непрочитано у него: ${d.unread}.${self?' Сейчас всплывёт здесь ↗':''}</div>`;
+    const sched=d.scheduled?` Из них по времени: ${d.scheduled} (выпустит планировщик, до ~минуты).`:'';
+    box.innerHTML=`<div class="msg ok">Отправлено ${d.sent} для «${esc(d.target)}». Непрочитано у него: ${d.unread}.${sched}${self&&!d.scheduled?' Сейчас всплывёт здесь ↗':''}</div>`;
     if(self&&window.nmPollNow)window.nmPollNow();  // мгновенно показать очередь себе
   }).catch(()=>{btn.disabled=false;box.innerHTML='<div class="msg err">Ошибка сети.</div>';});
 }

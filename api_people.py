@@ -255,6 +255,7 @@ async def materialize_user_schedule(user_id: str, actor: dict = Depends(require_
 class TestMessage(BaseModel):
     title: str | None = None
     body: str | None = None
+    delay: int | None = 0   # секунд от «сейчас»; 0 — доставить сразу
 
 
 class NotifyTestRequest(BaseModel):
@@ -270,8 +271,11 @@ async def notify_test(user_id: str, req: NotifyTestRequest, actor: dict = Depend
     if not msgs:
         raise HTTPException(status_code=400, detail="Нет сообщений для отправки")
     for m in msgs:
-        messaging.push_test(target["id"], (m.title or "").strip(), (m.body or "").strip())
-    return {"sent": len(msgs), "unread": messaging.unread_count(target["id"]),
+        messaging.push_test(target["id"], (m.title or "").strip(), (m.body or "").strip(),
+                            delay_seconds=m.delay or 0)
+    scheduled = sum(1 for m in msgs if (m.delay or 0) > 0)
+    return {"sent": len(msgs), "scheduled": scheduled,
+            "unread": messaging.unread_count(target["id"]),
             "target": target.get("full_name") or target.get("username") or target["id"]}
 
 

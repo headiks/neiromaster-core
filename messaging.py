@@ -168,20 +168,32 @@ def unread_count(employee_id: str) -> int:
     return r["n"] if r else 0
 
 
-def push_test(employee_id: str, title: str = "", body: str = "") -> str:
-    """Кладёт тестовое сообщение сразу как delivered — для ручной проверки уведомлений
-    из админки. Возвращает id созданной строки."""
+def push_test(employee_id: str, title: str = "", body: str = "",
+              delay_seconds: int = 0) -> str:
+    """Кладёт тестовое сообщение в инбокс для ручной проверки уведомлений из админки.
+    delay_seconds<=0 — сразу delivered. delay_seconds>0 — pending с send_at в будущем,
+    выпустит фоновый планировщик (точность ~ его интервал, NEIROMASTER_SCHEDULER_INTERVAL,
+    по умолчанию 60 с). Возвращает id созданной строки."""
     import uuid
     mid = f"test-{uuid.uuid4().hex[:8]}"
     row_id = f"{employee_id}:{mid}"
-    db.execute(
-        "INSERT INTO scheduled_messages "
-        "(id, employee_id, message_id, title, body, send_at, status, delivered_at) "
-        "VALUES (%s, %s, %s, %s, %s, now(), 'delivered', now())",
-        (row_id, employee_id, mid,
-         title or "Тестовое уведомление",
-         body or "Проверка системы уведомлений НейроМастер."),
-    )
+    title = title or "Тестовое уведомление"
+    body = body or "Проверка системы уведомлений НейроМастер."
+    delay = max(0, int(delay_seconds or 0))
+    if delay <= 0:
+        db.execute(
+            "INSERT INTO scheduled_messages "
+            "(id, employee_id, message_id, title, body, send_at, status, delivered_at) "
+            "VALUES (%s, %s, %s, %s, %s, now(), 'delivered', now())",
+            (row_id, employee_id, mid, title, body),
+        )
+    else:
+        db.execute(
+            "INSERT INTO scheduled_messages "
+            "(id, employee_id, message_id, title, body, send_at, status) "
+            "VALUES (%s, %s, %s, %s, %s, now() + make_interval(secs => %s), 'pending')",
+            (row_id, employee_id, mid, title, body, delay),
+        )
     return row_id
 
 
